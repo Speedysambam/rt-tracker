@@ -224,15 +224,24 @@ export default function App() {
     const newLog=log.map(e=>e.id===returnId?updated:e);
     setLog(newLog); fbWrite('log',newLog);
 
-    if(rf.comments.trim() && settings.emailList.length>0) {
+    const missingRts    = (entry.rts||[]).filter(n=>!rf.retRts.includes(n));
+    const missingWands  = (entry.wands||[]).filter(n=>!rf.retWands.includes(n));
+    const missingLights = (entry.lights||[]).filter(n=>!rf.retLights.includes(n));
+    const anyMissing    = missingRts.length+missingWands.length+missingLights.length>0;
+
+    if((rf.comments.trim()||anyMissing) && settings.emailList.length>0) {
       const gear=[];
       if((entry.rts||[]).length)    gear.push(`📻 RTs: ${sortNums(entry.rts).map(n=>`#${n}`).join(', ')}`);
       if((entry.wands||[]).length)  gear.push(`🟡 Wands: ${sortNums(entry.wands).map(n=>`#${n}`).join(', ')}`);
       if((entry.lights||[]).length) gear.push(`💡 Lights: ${sortNums(entry.lights).map(n=>`#${n}`).join(', ')}`);
+      const missing=[];
+      if(missingRts.length)    missing.push(`📻 RTs: ${sortNums(missingRts).map(n=>`#${n}`).join(', ')}`);
+      if(missingWands.length)  missing.push(`🟡 Wands: ${sortNums(missingWands).map(n=>`#${n}`).join(', ')}`);
+      if(missingLights.length) missing.push(`💡 Lights: ${sortNums(missingLights).map(n=>`#${n}`).join(', ')}`);
       sendNotification({
         recipients:settings.emailList, staffName:entry.name,
         timeOut:fmtTime(entry.timeOut), timeIn:fmtTime(new Date(rf.timeIn).toISOString()),
-        date:fmtDate(entry.timeOut), gearDetails:gear, comments:rf.comments
+        date:fmtDate(entry.timeOut), gearDetails:gear, missingDetails:missing, comments:rf.comments
       });
     }
     goTo(PAGES.DASHBOARD);
