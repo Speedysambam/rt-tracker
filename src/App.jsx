@@ -869,7 +869,7 @@ export default function App() {
                           <span className="text-sm text-slate-700">{email}</span>
                           <button onClick={()=>removeEmail(email)} className="text-xs text-red-500 hover:text-red-700 ml-3 shrink-0 transition">Remove</button>
                         </div>
-                      ))}
+                      ))} 
                     </div>
                   )}
                 </div>
