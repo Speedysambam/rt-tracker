@@ -188,9 +188,9 @@ export default function App() {
   // ── Firebase ────────────────────────────────────────────────────────────────
   useEffect(()=>{
     const check=()=>{ if(loadedRef.current.log&&loadedRef.current.staff&&loadedRef.current.settings) setLoading(false); };
-    const unsubLog=onValue(ref(db,'log'),snap=>{ setLog(toArr(snap.val())); loadedRef.current.log=true; check(); });
-    const unsubStaff=onValue(ref(db,'staff'),snap=>{ setStaff(toArr(snap.val())); loadedRef.current.staff=true; check(); });
-    const unsubSettings=onValue(ref(db,'settings'),snap=>{
+    const unsubLog=onValue(ref(db,rp('log')),snap=>{ setLog(toArr(snap.val())); loadedRef.current.log=true; check(); });
+    const unsubStaff=onValue(ref(db,rp('staff')),snap=>{ setStaff(toArr(snap.val())); loadedRef.current.staff=true; check(); });
+    const unsubSettings=onValue(ref(db,rp('settings')),snap=>{
       const d=snap.val()||{};
       setSettings({
         rtCount:   d.rtCount    ?? 30,
@@ -869,7 +869,7 @@ export default function App() {
                           <span className="text-sm text-slate-700">{email}</span>
                           <button onClick={()=>removeEmail(email)} className="text-xs text-red-500 hover:text-red-700 ml-3 shrink-0 transition">Remove</button>
                         </div>
-                      ))} 
+                      ))}
                     </div>
                   )}
                 </div>
