@@ -29,7 +29,9 @@ const GROUP_COLORS = [
 ];
 const GC = Object.fromEntries(GROUP_COLORS.map(c=>[c.id,c]));
 
-const fbWrite  = (path,data) => set(ref(db,path),data).catch(console.error);
+const REGION = import.meta.env.VITE_REGION || '';
+const rp = p => REGION ? `${REGION}/${p}` : p;
+const fbWrite = (path, data) => set(ref(db, rp(path)), data).catch(console.error);
 const toArr    = v => !v?[]:Array.isArray(v)?v.filter(Boolean):Object.values(v).filter(Boolean);
 const pad      = n => String(n).padStart(2,"0");
 const fmt      = ms => { const m=Math.floor(ms/60000),h=Math.floor(m/60); return h>0?`${h}h ${m%60}m`:`${m}m`; };
