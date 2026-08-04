@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, onValue, set } from 'firebase/database';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getDatabase, ref, onValue, set, get } from 'firebase/database';
 
-const _app = initializeApp({
+const _cfg = {
   apiKey: "AIzaSyA5ISTFIZTFQnNvox8YNfsMpaiLOL1aTgU",
   authDomain: "rt-checkout-tracker.firebaseapp.com",
   databaseURL: "https://rt-checkout-tracker-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -10,226 +10,282 @@ const _app = initializeApp({
   storageBucket: "rt-checkout-tracker.firebasestorage.app",
   messagingSenderId: "64761952473",
   appId: "1:64761952473:web:23797528d1fb376f0326c8"
-});
-const db = getDatabase(_app);
-const REGION = import.meta.env.VITE_REGION || '';
-const rp = p => REGION ? `${REGION}/${p}` : p;
+};
+const fbApp  = getApps().length ? getApp() : initializeApp(_cfg);
+const db     = getDatabase(fbApp);
 
-const toArr = v => !v ? [] : Array.isArray(v) ? v.filter(Boolean) : Object.values(v).filter(Boolean);
-const today = () => new Date().toISOString().split('T')[0];
-const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString("en-NZ", {hour:"2-digit", minute:"2-digit"}) : "—";
-const sortNums = arr => [...arr].sort((a,b) => a-b);
-const regionLabel = REGION ? REGION.charAt(0).toUpperCase() + REGION.slice(1) : 'Hamilton';
+const REGION       = import.meta.env.VITE_REGION || '';
+const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'Hamilton';
+const rp           = p => REGION ? `${REGION}/${p}` : p;
+const fbSet        = (path,data) => set(ref(db, rp(path)), data).catch(console.error);
+const toArr        = v => !v?[]:Array.isArray(v)?v.filter(Boolean):Object.values(v).filter(Boolean);
+const fmtTime      = iso => iso?new Date(iso).toLocaleTimeString("en-NZ",{hour:"2-digit",minute:"2-digit"}):"—";
+const fmtDate      = iso => iso?new Date(iso).toLocaleDateString("en-NZ",{day:"2-digit",month:"short",year:"numeric"}):"—";
+const todayKey     = () => new Date().toISOString().split('T')[0];
+const sortNums     = arr => [...arr].sort((a,b)=>a-b);
 
+const GROUP_COLORS = [
+  {id:"purple", light:"#f3e8ff",dark:"#9333ea"},{id:"indigo", light:"#e0e7ff",dark:"#4f46e5"},
+  {id:"violet", light:"#ede9fe",dark:"#7c3aed"},{id:"fuchsia",light:"#fae8ff",dark:"#c026d3"},
+  {id:"sky",    light:"#e0f2fe",dark:"#0284c7"},{id:"cyan",   light:"#cffafe",dark:"#0891b2"},
+];
+const GC         = Object.fromEntries(GROUP_COLORS.map(c=>[c.id,c]));
+const getRtGroup = (n,groups) => (groups||[]).find(g=>(g.rts||[]).includes(n))||null;
+
+// ── PIN pad ───────────────────────────────────────────────────────────────────
+function PinPad({ value, onChange, onComplete }) {
+  const keys=['1','2','3','4','5','6','7','8','9','','0','⌫'];
+  const tap=d=>{
+    if(d==='⌫'){ onChange(value.slice(0,-1)); return; }
+    if(value.length>=4) return;
+    const next=value+d; onChange(next);
+    if(next.length===4) onComplete(next);
+  };
+  return (
+    <div>
+      <div className="flex justify-center gap-4 mb-8">
+        {[0,1,2,3].map(i=>(
+          <div key={i} className={`w-4 h-4 rounded-full border-2 transition-all ${i<value.length?'bg-blue-600 border-blue-600 scale-110':'border-slate-300'}`}/>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto">
+        {keys.map((k,i)=> k?(
+          <button key={i} onClick={()=>tap(k)}
+            className={`h-16 rounded-2xl text-2xl font-semibold active:scale-95 transition-all
+              ${k==='⌫'?'bg-slate-100 text-slate-500 hover:bg-slate-200':'bg-white text-slate-800 shadow-sm border border-slate-200 hover:bg-slate-50'}`}>
+            {k}
+          </button>
+        ):<div key={i}/>)}
+      </div>
+    </div>
+  );
+}
+
+// ── Main app ──────────────────────────────────────────────────────────────────
 export default function StmsApp() {
-  const [page, setPage]           = useState('login');
-  const [staff, setStaff]         = useState([]);
-  const [log, setLog]             = useState([]);
-  const [schedule, setSchedule]   = useState({});
-  const [connected, setConnected] = useState(false);
-  const [loading, setLoading]     = useState(true);
-  const [currentStms, setCurrentStms] = useState(null);
-  const [selectedName, setSelectedName] = useState('');
-  const [pin, setPin]             = useState('');
-  const [pinError, setPinError]   = useState('');
-  const [assigningItem, setAssigningItem] = useState(null); // {logId, key, label, current}
-  const [extraTc, setExtraTc]     = useState('');
+  const [phase,setPhase]           = useState('loading'); // loading|select|pin|board
+  const [stmsList,setStmsList]     = useState([]);
+  const [selectedStms,setSelectedStms] = useState(null);
+  const [pinValue,setPinValue]     = useState('');
+  const [pinError,setPinError]     = useState('');
 
-  // Restore session
-  useEffect(() => {
-    const saved = sessionStorage.getItem('stms_user');
-    if (saved) { setCurrentStms(JSON.parse(saved)); setPage('dashboard'); }
-  }, []);
+  const [log,setLog]               = useState([]);
+  const [todayTcs,setTodayTcs]     = useState([]);
+  const [rtGroups,setRtGroups]     = useState([]);
+  const [connected,setConnected]   = useState(false);
 
-  // Firebase listeners
-  useEffect(() => {
-    const loaded = { staff:false, log:false, schedule:false };
-    const check = () => { if (Object.values(loaded).every(Boolean)) setLoading(false); };
-    const unsubStaff = onValue(ref(db, rp('staff')), snap => {
-      setStaff(toArr(snap.val())); loaded.staff=true; check();
+  const [assignTarget,setAssignTarget] = useState(null); // {logId,gearType,num,current}
+  const [tcFilter,setTcFilter]     = useState('');
+
+  // Load STMS list for login
+  useEffect(()=>{
+    const unsub=onValue(ref(db,rp('staff')),snap=>{
+      const all=toArr(snap.val());
+      setStmsList(all.filter(s=>s.role==='STMS').sort((a,b)=>a.name.localeCompare(b.name)));
+      setPhase('select');
     });
-    const unsubLog = onValue(ref(db, rp('log')), snap => {
-      setLog(toArr(snap.val())); loaded.log=true; check();
+    return()=>unsub();
+  },[]);
+
+  // Load board data after login
+  useEffect(()=>{
+    if(phase!=='board'||!selectedStms) return;
+
+    const unsubLog=onValue(ref(db,rp('log')),snap=>{
+      setLog(toArr(snap.val()));
     });
-    const unsubSchedule = onValue(ref(db, rp(`schedule/${today()}`)), snap => {
-      setSchedule(snap.val() || {}); loaded.schedule=true; check();
+    const unsubSettings=onValue(ref(db,rp('settings')),snap=>{
+      const d=snap.val()||{};
+      setRtGroups(toArr(d.rtGroups).map(g=>({...g,rts:toArr(g.rts)})));
     });
-    const unsubConn = onValue(ref(db, '.info/connected'), snap => setConnected(snap.val()===true));
-    return () => { unsubStaff(); unsubLog(); unsubSchedule(); unsubConn(); };
-  }, []);
+    const unsubConn=onValue(ref(db,'.info/connected'),snap=>setConnected(snap.val()===true));
 
-  const stmsList = staff.filter(s => s.role==='STMS').sort((a,b) => a.name.localeCompare(b.name));
+    get(ref(db,rp(`schedule/${todayKey()}/${selectedStms.id}`))).then(snap=>{
+      if(snap.exists()){ const d=snap.val(); setTodayTcs(Array.isArray(d)?d:Object.values(d)); }
+      else setTodayTcs([]);
+    });
 
-  const login = () => {
-    const stms = staff.find(s => s.name === selectedName);
-    if (!stms)       return setPinError('Please select your name.');
-    if (!stms.pin)   return setPinError('No PIN set — contact admin.');
-    if (stms.pin !== pin) return setPinError('Incorrect PIN.');
-    setCurrentStms(stms);
-    sessionStorage.setItem('stms_user', JSON.stringify(stms));
-    setPinError(''); setPage('dashboard');
+    return()=>{ unsubLog(); unsubSettings(); unsubConn(); };
+  },[phase,selectedStms]);
+
+  const handlePinComplete=pin=>{
+    if(!selectedStms.pin){ setPinError('No PIN set — ask your manager to set one in the Staff tab.'); setPinValue(''); return; }
+    if(pin!==selectedStms.pin){ setPinError('Incorrect PIN. Try again.'); setPinValue(''); return; }
+    setPinError(''); setPhase('board');
   };
 
-  const logout = () => {
-    setCurrentStms(null);
-    sessionStorage.removeItem('stms_user');
-    setSelectedName(''); setPin(''); setPage('login');
+  const assignTc=(logId,gearType,num,tcName)=>{
+    fbSet(`log/${logId}/tcAssignments/${gearType}_${num}`, tcName||null);
+    setAssignTarget(null); setTcFilter('');
   };
 
-  // Today's TC list for current STMS
-  const todayTcs = (() => {
-    if (!currentStms) return [];
-    const entry = Object.values(schedule).find(e => e.stmsName === currentStms.name);
-    return entry?.tcs || [];
-  })();
+  const getAssignment=(entry,gearType,num)=>entry?.tcAssignments?.[`${gearType}_${num}`]||null;
 
-  // Active checkouts for this STMS (could be multiple shifts)
-  const myCheckouts = currentStms
-    ? log.filter(e => !e.returnedAt && e.name === currentStms.name)
-    : [];
+  const myCheckouts=log.filter(e=>e.name===selectedStms?.name&&!e.returnedAt);
+  const filteredTcs=tcFilter?todayTcs.filter(tc=>tc.toLowerCase().includes(tcFilter.toLowerCase())):todayTcs;
 
-  // Assign TC to an item
-  const assignTc = (logId, key, tcName) => {
-    const entry = log.find(e => e.id === logId);
-    if (!entry) return;
-    const updated = { ...entry, tcAssignments: { ...(entry.tcAssignments||{}), [key]: tcName } };
-    const newLog = log.map(e => e.id === logId ? updated : e);
-    setLog(newLog);
-    set(ref(db, rp('log')), newLog).catch(console.error);
-    setAssigningItem(null); setExtraTc('');
-  };
-
-  const unassign = (logId, key) => {
-    const entry = log.find(e => e.id === logId);
-    if (!entry) return;
-    const assignments = { ...(entry.tcAssignments||{}) };
-    delete assignments[key];
-    const newLog = log.map(e => e.id === logId ? { ...e, tcAssignments: assignments } : e);
-    setLog(newLog);
-    set(ref(db, rp('log')), newLog).catch(console.error);
-    setAssigningItem(null);
-  };
+  const logout=()=>{ setPhase('select'); setSelectedStms(null); setLog([]); setTodayTcs([]); setPinValue(''); setPinError(''); };
 
   // ── LOADING ──────────────────────────────────────────────────────────────────
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center h-screen gap-3 text-slate-400">
-      <div className="text-3xl animate-pulse">📡</div>
-      <p className="text-sm">Connecting…</p>
+  if(phase==='loading') return (
+    <div className="flex flex-col items-center justify-center h-screen gap-3 text-slate-400 font-sans">
+      <div className="text-3xl animate-pulse">📻</div>
+      <p className="text-sm">Loading…</p>
     </div>
   );
 
-  // ── LOGIN ────────────────────────────────────────────────────────────────────
-  if (page === 'login') return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans">
-      <div className="bg-white rounded-2xl shadow-sm p-6 w-full max-w-sm">
-        <div className="text-center mb-6">
-          <div className="text-4xl mb-2">📡</div>
-          <h1 className="text-lg font-bold text-slate-800">STMS Site Tracker</h1>
-          <p className="text-sm text-slate-400 mt-0.5">{regionLabel}</p>
-        </div>
-        <div className="flex flex-col gap-3">
-          <div>
-            <label className="block text-sm font-semibold text-slate-600 mb-1">Your Name</label>
-            <select className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              value={selectedName} onChange={e => { setSelectedName(e.target.value); setPinError(''); }}>
-              <option value="">Select your name…</option>
-              {stmsList.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-            </select>
+  // ── SELECT NAME ──────────────────────────────────────────────────────────────
+  if(phase==='select') return (
+    <div className="min-h-screen bg-slate-100 font-sans">
+      <div className="bg-blue-800 text-white px-4 py-4 text-center shadow-md">
+        <div className="font-bold text-lg">📻 Site Tracker</div>
+        <div className="text-blue-300 text-sm">{REGION_LABEL}</div>
+      </div>
+      <div className="px-4 py-8 max-w-sm mx-auto">
+        <h2 className="text-xl font-bold text-slate-800 mb-1 text-center">Who are you?</h2>
+        <p className="text-sm text-slate-500 text-center mb-6">Select your name to continue</p>
+        {stmsList.length===0?(
+          <div className="text-center text-slate-400 text-sm py-12">No STMSs found. Ask your manager to add staff members.</div>
+        ):(
+          <div className="flex flex-col gap-2">
+            {stmsList.map(s=>(
+              <button key={s.id} onClick={()=>{setSelectedStms(s);setPinValue('');setPinError('');setPhase('pin');}}
+                className="w-full bg-white rounded-2xl shadow-sm border border-slate-200 px-5 py-4 text-left hover:border-blue-400 hover:bg-blue-50 active:scale-95 transition-all flex items-center justify-between">
+                <span className="font-semibold text-slate-800 text-base">{s.name}</span>
+                <span className="text-blue-400 text-lg">›</span>
+              </button>
+            ))}
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-600 mb-1">PIN</label>
-            <input type="password" inputMode="numeric" maxLength={4} placeholder="••••"
-              className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-2xl tracking-widest"
-              value={pin}
-              onChange={e => { setPin(e.target.value.replace(/\D/g,'').slice(0,4)); setPinError(''); }}
-              onKeyDown={e => e.key==='Enter' && login()} />
-          </div>
-          {pinError && <p className="text-red-500 text-sm bg-red-50 rounded-lg px-3 py-2">{pinError}</p>}
-          <button onClick={login} className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-600 active:scale-95 transition text-sm mt-1">
-            Log In
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
 
-  // ── DASHBOARD ────────────────────────────────────────────────────────────────
+  // ── PIN ENTRY ────────────────────────────────────────────────────────────────
+  if(phase==='pin') return (
+    <div className="min-h-screen bg-slate-100 font-sans">
+      <div className="bg-blue-800 text-white px-4 py-3 flex items-center gap-3 shadow-md">
+        <button onClick={()=>{setPhase('select');setPinValue('');setPinError('');}} className="text-blue-200 hover:text-white text-2xl leading-none">‹</button>
+        <div>
+          <div className="font-bold">📻 Site Tracker</div>
+          <div className="text-blue-300 text-xs">{selectedStms?.name}</div>
+        </div>
+      </div>
+      <div className="px-4 py-10 max-w-sm mx-auto">
+        <h2 className="text-xl font-bold text-slate-800 mb-2 text-center">Enter PIN</h2>
+        {pinError?(
+          <p className="text-sm text-red-500 text-center mb-6 bg-red-50 rounded-xl px-3 py-2">{pinError}</p>
+        ):(
+          <p className="text-sm text-slate-500 text-center mb-6">Enter your 4-digit PIN</p>
+        )}
+        <PinPad value={pinValue} onChange={v=>{setPinValue(v);if(pinError)setPinError('');}} onComplete={handlePinComplete}/>
+      </div>
+    </div>
+  );
+
+  // ── BOARD ────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-100 font-sans">
       <div className="bg-blue-800 text-white px-4 py-3 flex items-center justify-between shadow-md sticky top-0 z-20">
         <div className="flex items-center gap-2">
-          <span className="font-bold tracking-wide">📡 Site Tracker</span>
-          <span title={connected?"Connected":"Reconnecting…"}
-            className={`w-2 h-2 rounded-full ml-1 ${connected?"bg-green-400":"bg-yellow-400 animate-pulse"}`}/>
+          <span className="font-bold">📻 Site Tracker</span>
+          <span title={connected?"Connected":"Reconnecting…"} className={`w-2 h-2 rounded-full ml-1 ${connected?"bg-green-400":"bg-yellow-400 animate-pulse"}`}/>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-blue-200 hidden sm:block">{currentStms?.name}</span>
-          <button onClick={logout} className="text-xs px-3 py-1.5 rounded font-medium bg-blue-700 hover:bg-blue-600 text-blue-100 transition">
-            Log out
-          </button>
+        <div className="flex items-center gap-2">
+          <span className="text-blue-200 text-xs truncate max-w-[120px]">{selectedStms.name}</span>
+          <button onClick={logout} className="text-xs bg-blue-700 hover:bg-blue-600 px-3 py-1.5 rounded-lg transition shrink-0">Log out</button>
         </div>
       </div>
 
       <div className="max-w-xl mx-auto px-4 py-5">
-
-        {/* Name banner on mobile */}
-        <p className="text-sm text-slate-500 mb-4 sm:hidden">Logged in as <span className="font-semibold text-slate-700">{currentStms?.name}</span></p>
-
-        {myCheckouts.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">
-            <div className="text-4xl mb-3">📻</div>
-            <p className="font-medium">No active checkouts</p>
-            <p className="text-sm mt-1">Your RT assignments will appear here once gear is checked out from the gear room</p>
+        {myCheckouts.length===0?(
+          <div className="text-center py-24 text-slate-400">
+            <div className="text-5xl mb-3">📭</div>
+            <p className="font-medium text-slate-500">No active checkouts</p>
+            <p className="text-sm mt-1">Your gear will appear here once checked out from the RT room</p>
           </div>
-        ) : (
+        ):(
           <div className="flex flex-col gap-4">
-            {myCheckouts.map(checkout => {
-              const rts    = checkout.rts    || [];
-              const wands  = checkout.wands  || [];
-              const lights = checkout.lights || [];
-              const assignments = checkout.tcAssignments || {};
-
-              const GearGrid = ({ items, prefix, emoji, label }) => {
-                if (!items.length) return null;
-                return (
-                  <div className="mt-3">
-                    <p className="text-xs font-semibold text-slate-500 mb-2">{emoji} {label} — tap to assign</p>
-                    <div className="grid gap-2" style={{gridTemplateColumns:'repeat(auto-fill,minmax(88px,1fr))'}}>
-                      {sortNums(items).map(num => {
-                        const key = prefix ? `${prefix}_${num}` : num;
-                        const tc = assignments[key];
-                        return (
-                          <button key={key}
-                            onClick={() => setAssigningItem({ logId:checkout.id, key, label:`${label.split(' ')[0]} #${num}`, current:tc })}
-                            className={`rounded-xl p-2 text-center transition active:scale-95 border ${tc
-                              ? 'bg-green-50 border-green-200 hover:border-green-400'
-                              : 'bg-slate-50 border-slate-200 hover:border-blue-300 hover:bg-blue-50'}`}>
-                            <div className="text-sm font-bold text-slate-700">{emoji} #{num}</div>
-                            <div className={`text-xs mt-0.5 truncate leading-tight ${tc ? 'text-green-600 font-medium' : 'text-slate-400'}`}>
-                              {tc || 'Unassigned'}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              };
-
-              const assigned = Object.values(assignments).filter(Boolean).length;
-              const total = rts.length + wands.length + lights.length;
-
+            {myCheckouts.map(checkout=>{
+              const rts=sortNums(checkout.rts||[]);
+              const wands=sortNums(checkout.wands||[]);
+              const lights=sortNums(checkout.lights||[]);
+              const total=rts.length+wands.length+lights.length;
+              const assigned=Object.values(checkout.tcAssignments||{}).filter(Boolean).length;
               return (
-                <div key={checkout.id} className="bg-white rounded-2xl shadow-sm p-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs text-slate-400">Checked out {fmtTime(checkout.timeOut)}</p>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${assigned===total && total>0 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                <div key={checkout.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  {/* Card header */}
+                  <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                    <div className="text-sm">
+                      <span className="font-semibold text-slate-800">Out {fmtTime(checkout.timeOut)}</span>
+                      <span className="text-slate-400"> · {fmtDate(checkout.timeOut)}</span>
+                      {checkout.channel&&<span className="ml-2 bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-lg">Ch. {checkout.channel}</span>}
+                    </div>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${assigned===total?'bg-green-100 text-green-700':'bg-orange-100 text-orange-600'}`}>
                       {assigned}/{total} assigned
                     </span>
                   </div>
-                  <GearGrid items={rts}    prefix={null}    emoji="📻" label="RTs" />
-                  <GearGrid items={wands}  prefix="wand"   emoji="🟡" label="Wands" />
-                  <GearGrid items={lights} prefix="light"  emoji="💡" label="Lights" />
+
+                  <div className="p-4 flex flex-col gap-4">
+                    {/* RTs */}
+                    {rts.length>0&&(
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">📻 RTs</p>
+                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                          {rts.map(n=>{
+                            const tc=getAssignment(checkout,'rt',n);
+                            const grp=getRtGroup(n,rtGroups); const gc=grp?GC[grp.color]:null;
+                            return (
+                              <button key={n} onClick={()=>{setAssignTarget({logId:checkout.id,gearType:'rt',num:n,current:tc});setTcFilter('');}}
+                                className="rounded-xl p-2 text-center border-2 active:scale-95 transition-all"
+                                style={gc?{backgroundColor:gc.light,borderColor:tc?gc.dark:'#e2e8f0'}:{backgroundColor:tc?'#eff6ff':'#f8fafc',borderColor:tc?'#3b82f6':'#e2e8f0'}}>
+                                <div className="text-base font-bold leading-tight" style={gc?{color:gc.dark}:{color:'#1e293b'}}>{n}</div>
+                                <div className="text-xs mt-0.5 truncate leading-tight" style={{color:'#64748b',fontSize:'10px'}}>
+                                  {tc?tc.split(' ')[0]:<span style={{color:'#cbd5e1'}}>—</span>}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {/* Wands */}
+                    {wands.length>0&&(
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">🟡 Wands</p>
+                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                          {wands.map(n=>{
+                            const tc=getAssignment(checkout,'wand',n);
+                            return (
+                              <button key={n} onClick={()=>{setAssignTarget({logId:checkout.id,gearType:'wand',num:n,current:tc});setTcFilter('');}}
+                                className={`rounded-xl p-2 text-center border-2 active:scale-95 transition-all ${tc?'bg-yellow-50 border-yellow-400':'bg-slate-50 border-slate-200'}`}>
+                                <div className="text-base font-bold text-slate-800 leading-tight">{n}</div>
+                                <div className="text-xs mt-0.5 truncate text-slate-400 leading-tight" style={{fontSize:'10px'}}>{tc?tc.split(' ')[0]:'—'}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {/* Lights */}
+                    {lights.length>0&&(
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">💡 Lights</p>
+                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                          {lights.map(n=>{
+                            const tc=getAssignment(checkout,'light',n);
+                            return (
+                              <button key={n} onClick={()=>{setAssignTarget({logId:checkout.id,gearType:'light',num:n,current:tc});setTcFilter('');}}
+                                className={`rounded-xl p-2 text-center border-2 active:scale-95 transition-all ${tc?'bg-orange-50 border-orange-400':'bg-slate-50 border-slate-200'}`}>
+                                <div className="text-base font-bold text-slate-800 leading-tight">{n}</div>
+                                <div className="text-xs mt-0.5 truncate text-slate-400 leading-tight" style={{fontSize:'10px'}}>{tc?tc.split(' ')[0]:'—'}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -237,55 +293,71 @@ export default function StmsApp() {
         )}
       </div>
 
-      {/* Assignment bottom sheet */}
-      {assigningItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-end justify-center z-30 p-4"
-          onClick={e => { if (e.target===e.currentTarget) { setAssigningItem(null); setExtraTc(''); } }}>
-          <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-slate-800">Assign {assigningItem.label}</h3>
-              <button onClick={() => { setAssigningItem(null); setExtraTc(''); }} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+      {/* ── Assignment bottom sheet ── */}
+      {assignTarget&&(
+        <div className="fixed inset-0 z-50 flex flex-col justify-end font-sans">
+          <div className="absolute inset-0 bg-black bg-opacity-40" onClick={()=>{setAssignTarget(null);setTcFilter('');}}/>
+          <div className="relative bg-white rounded-t-3xl shadow-2xl max-h-[80vh] flex flex-col">
+            {/* Handle + header */}
+            <div className="px-5 pt-4 pb-3 border-b border-slate-100 shrink-0">
+              <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-4"/>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">
+                    Assign {assignTarget.gearType==='rt'?'📻 RT':assignTarget.gearType==='wand'?'🟡 Wand':'💡 Light'} #{assignTarget.num}
+                  </h3>
+                  {assignTarget.current&&(
+                    <p className="text-xs text-slate-500 mt-0.5">Currently: <span className="font-medium text-slate-700">{assignTarget.current}</span></p>
+                  )}
+                </div>
+                {assignTarget.current&&(
+                  <button onClick={()=>assignTc(assignTarget.logId,assignTarget.gearType,assignTarget.num,null)}
+                    className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0 ml-3">
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
 
-            {assigningItem.current && (
-              <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between">
-                <span className="text-sm text-green-700 font-medium">Currently: {assigningItem.current}</span>
-                <button onClick={() => unassign(assigningItem.logId, assigningItem.key)}
-                  className="text-xs text-red-500 hover:text-red-700 ml-2 shrink-0">Unassign</button>
-              </div>
-            )}
+            {/* Search */}
+            <div className="px-4 py-3 shrink-0">
+              <input autoFocus className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Search TCs or type a name…" value={tcFilter} onChange={e=>setTcFilter(e.target.value)}/>
+            </div>
 
-            {todayTcs.length > 0 && (
-              <div className="flex flex-col gap-2 mb-3 max-h-48 overflow-y-auto">
-                {todayTcs.map(tc => (
-                  <button key={tc} onClick={() => assignTc(assigningItem.logId, assigningItem.key, tc)}
-                    className={`w-full text-left px-4 py-3 rounded-xl border text-sm font-medium transition active:scale-95 ${
-                      assigningItem.current===tc
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-blue-400 hover:bg-blue-50'
-                    }`}>
-                    {tc}
+            {/* TC list */}
+            <div className="flex-1 overflow-y-auto px-4 pb-8">
+              {filteredTcs.length>0&&(
+                <>
+                  {tcFilter===''&&<p className="text-xs text-slate-400 mb-2 font-semibold uppercase tracking-wide">Today's TCs</p>}
+                  <div className="flex flex-col gap-1.5">
+                    {filteredTcs.map(tc=>(
+                      <button key={tc} onClick={()=>assignTc(assignTarget.logId,assignTarget.gearType,assignTarget.num,tc)}
+                        className={`w-full text-left px-4 py-3.5 rounded-xl font-medium text-sm transition-all active:scale-95
+                          ${assignTarget.current===tc?'bg-blue-600 text-white shadow-sm':'bg-slate-50 text-slate-800 hover:bg-blue-50 hover:text-blue-700'}`}>
+                        {tc}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Manual entry if typed name not in list */}
+              {tcFilter&&!filteredTcs.some(tc=>tc.toLowerCase()===tcFilter.toLowerCase())&&(
+                <div className="mt-3">
+                  <button onClick={()=>assignTc(assignTarget.logId,assignTarget.gearType,assignTarget.num,tcFilter)}
+                    className="w-full bg-blue-700 text-white font-semibold py-3.5 rounded-xl hover:bg-blue-600 active:scale-95 transition text-sm">
+                    Assign to "{tcFilter}"
                   </button>
-                ))}
-              </div>
-            )}
+                </div>
+              )}
 
-            {todayTcs.length === 0 && (
-              <p className="text-sm text-slate-400 mb-3 text-center py-2">No TCs loaded for today — add manually below or ask admin to upload the schedule.</p>
-            )}
-
-            <div className={todayTcs.length > 0 ? "border-t border-slate-100 pt-3" : ""}>
-              <p className="text-xs text-slate-500 mb-2">Add TC manually:</p>
-              <div className="flex gap-2">
-                <input className="flex-1 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="TC name" value={extraTc}
-                  onChange={e => setExtraTc(e.target.value)}
-                  onKeyDown={e => { if (e.key==='Enter' && extraTc.trim()) { assignTc(assigningItem.logId, assigningItem.key, extraTc.trim()); }}}/>
-                <button onClick={() => { if (extraTc.trim()) assignTc(assigningItem.logId, assigningItem.key, extraTc.trim()); }}
-                  className="shrink-0 bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-blue-600 transition">
-                  Assign
-                </button>
-              </div>
+              {todayTcs.length===0&&!tcFilter&&(
+                <div className="text-center text-slate-400 text-sm py-6">
+                  <p>No TC schedule uploaded for today.</p>
+                  <p className="mt-1">Type a name above to assign manually.</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
