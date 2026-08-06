@@ -36,6 +36,7 @@ const GC = Object.fromEntries(GROUP_COLORS.map(c=>[c.id,c]));
 
 const fbGet      = path => get(ref(db,rp(path))).then(s=>s.exists()?s.val():null).catch(()=>null);
 const toArr      = v => !v?[]:Array.isArray(v)?v.filter(Boolean):Object.values(v).filter(Boolean);
+const logObj     = arr => Object.fromEntries(arr.map(e=>[e.id,e]));
 const pad        = n => String(n).padStart(2,"0");
 const fmt        = ms => { const m=Math.floor(ms/60000),h=Math.floor(m/60); return h>0?`${h}h ${m%60}m`:`${m}m`; };
 const fmtTime    = iso => iso?new Date(iso).toLocaleTimeString("en-NZ",{hour:"2-digit",minute:"2-digit"}):"—";
@@ -634,7 +635,7 @@ export default function App() {
                       {hasTc&&(
                         <div className="mt-2 text-xs bg-indigo-50 rounded-lg px-3 py-1.5">
                           <span className="font-semibold text-indigo-700">TC Assignments: </span>
-                          <span className="text-slate-600">{Object.entries(tcA).filter(([,v])=>v).map(([k,v])=>{const[type,num]=k.split('_');const emoji=type==='rt'?'📻':type==='wand'?'🟡':'💡';return `${emoji}#${num} → ${v}`;}).join(' · ')}</span>
+                          <span className="text-slate-600">{Object.entries(tcA).map(([rt,tc])=>`RT #${rt} → ${tc}`).join(' · ')}</span>
                         </div>
                       )}
                       {!isOut&&anyMissing&&<div className="mt-2 text-xs text-red-700 bg-red-50 rounded-lg px-3 py-1.5">⚠️ Missing:{mRts.length>0&&` RTs ${numList(sortNums(mRts))}`}{mWands.length>0&&` Wands ${numList(sortNums(mWands))}`}{mLights.length>0&&` Lights ${numList(sortNums(mLights))}`}</div>}
