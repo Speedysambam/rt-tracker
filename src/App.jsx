@@ -196,7 +196,7 @@ export default function App() {
   // ── Firebase ────────────────────────────────────────────────────────────────
   useEffect(()=>{
     const check=()=>{ if(loadedRef.current.log&&loadedRef.current.staff&&loadedRef.current.settings) setLoading(false); };
-    const unsubLog=onValue(ref(db,rp('log')),snap=>{ setLog(toArr(snap.val())); loadedRef.current.log=true; check(); });
+    const unsubLog=onValue(ref(db,rp('log')),snap=>{ setLog(toArr(snap.val()).filter(e=>e?.name)); loadedRef.current.log=true; check(); });
     const unsubStaff=onValue(ref(db,rp('staff')),snap=>{ setStaff(toArr(snap.val())); loadedRef.current.staff=true; check(); });
     const unsubSettings=onValue(ref(db,rp('settings')),snap=>{
       const d=snap.val()||{};
@@ -246,14 +246,14 @@ export default function App() {
     const entry={id:Date.now().toString(),name:cf.name.trim(),timeOut:new Date(cf.timeOut).toISOString(),
       rts:cf.rts,wands:cf.wands,lights:cf.lights,channel:cf.channel||null,signature:sig,
       returnedAt:null,retRts:null,retWands:null,retLights:null,comments:"",tcAssignments:{}};
-    const nl=[entry,...log]; setLog(nl); fbWrite('log',nl);
+    const nl=[entry,...log]; setLog(nl); fbWrite('log',logObj(nl));
     setCfErr(""); goTo(PAGES.DASHBOARD);
   };
 
   const submitReturn=()=>{
     const entry=log.find(e=>e.id===returnId);
     const updated={...entry,returnedAt:new Date(rf.timeIn).toISOString(),retRts:rf.retRts,retWands:rf.retWands,retLights:rf.retLights,comments:rf.comments};
-    const nl=log.map(e=>e.id===returnId?updated:e); setLog(nl); fbWrite('log',nl);
+    const nl=log.map(e=>e.id===returnId?updated:e); setLog(nl); fbWrite('log',logObj(nl));
     const mRts=(entry.rts||[]).filter(n=>!rf.retRts.includes(n));
     const mWands=(entry.wands||[]).filter(n=>!rf.retWands.includes(n));
     const mLights=(entry.lights||[]).filter(n=>!rf.retLights.includes(n));

@@ -92,7 +92,7 @@ export default function StmsApp() {
     if(phase!=='board'||!selectedStms) return;
 
     const unsubLog=onValue(ref(db,rp('log')),snap=>{
-      setLog(toArr(snap.val()));
+      setLog(toArr(snap.val()).filter(e=>e?.name));
     });
     const unsubSettings=onValue(ref(db,rp('settings')),snap=>{
       const d=snap.val()||{};
