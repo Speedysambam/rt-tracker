@@ -601,7 +601,7 @@ export default function App() {
             <div className="flex items-baseline justify-between mb-4"><h2 className="text-lg font-bold text-slate-800">Full Log</h2><span className="text-sm text-slate-500">{log.length} entries</span></div>
             {log.length===0?<div className="text-center py-20 text-slate-400 text-sm">No entries yet.</div>:(
               <div className="flex flex-col gap-3">
-                {log.map(e=>{
+                {[...log].reverse().map(e=>{
                   const isOut=!e.returnedAt;
                   const tRts=e.rts||[],tWands=e.wands||[],tLights=e.lights||[];
                   const rRts=e.retRts||[],rWands=e.retWands||[],rLights=e.retLights||[];
