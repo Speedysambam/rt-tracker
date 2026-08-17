@@ -77,6 +77,7 @@ export default function StmsApp() {
   const [connected,setConnected]   = useState(false);
 
   const [assignTarget,setAssignTarget] = useState(null); // {logId,gearType,num,current}
+  const [recentCrew,setRecentCrew] = useState([]);
   const [tcFilter,setTcFilter]     = useState('');
 
   // Load STMS list for login
