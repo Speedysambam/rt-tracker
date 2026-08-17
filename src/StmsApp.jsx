@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set, get } from 'firebase/database';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 
 const _cfg = {
   apiKey: "AIzaSyA5ISTFIZTFQnNvox8YNfsMpaiLOL1aTgU",
@@ -13,6 +14,7 @@ const _cfg = {
 };
 const fbApp  = getApps().length ? getApp() : initializeApp(_cfg);
 const db     = getDatabase(fbApp);
+initializeAppCheck(_app, { provider: new ReCaptchaV3Provider('YOUR_SITE_KEY_HERE'), isTokenAutoRefreshEnabled: true });
 
 const REGION       = import.meta.env.VITE_REGION || '';
 const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'Hamilton';
