@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set, get } from 'firebase/database';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import Papa from 'papaparse';
 
 const _app = initializeApp({
@@ -14,7 +13,6 @@ const _app = initializeApp({
   appId: "1:64761952473:web:23797528d1fb376f0326c8"
 });
 const db = getDatabase(_app);
-initializeAppCheck(_app, { provider: new ReCaptchaV3Provider('YOUR_SITE_KEY_HERE'), isTokenAutoRefreshEnabled: true });
 
 const REGION       = import.meta.env.VITE_REGION || '';
 const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'Hamilton';
