@@ -18,6 +18,7 @@ const REGION       = import.meta.env.VITE_REGION || '';
 const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'Hamilton';
 const rp           = p => REGION ? `${REGION}/${p}` : p;
 const fbWrite      = (path,data) => set(ref(db,rp(path)),data).catch(console.error);
+const fbGet        = path => get(ref(db,rp(path))).then(s=>s.exists()?s.val():null).catch(()=>null);
 
 const PAGES = { DASHBOARD:"dashboard",CHECKOUT:"checkout",RETURN:"return",LOG:"log",STAFF:"staff",PICKER:"picker",SETTINGS:"settings" };
 const ROLES = ["STMS","TC"];
@@ -25,16 +26,12 @@ const SETTINGS_PW = "AllianceHam";
 const DEF_SETTINGS = { rtCount:30,wandCount:10,lightCount:5,unavailableRts:[],unavailableWands:[],unavailableLights:[],emailList:[],rtGroups:[] };
 
 const GROUP_COLORS = [
-  { id:"purple",  light:"#f3e8ff", dark:"#9333ea" },
-  { id:"indigo",  light:"#e0e7ff", dark:"#4f46e5" },
-  { id:"violet",  light:"#ede9fe", dark:"#7c3aed" },
-  { id:"fuchsia", light:"#fae8ff", dark:"#c026d3" },
-  { id:"sky",     light:"#e0f2fe", dark:"#0284c7" },
-  { id:"cyan",    light:"#cffafe", dark:"#0891b2" },
+  {id:"purple", light:"#f3e8ff",dark:"#9333ea"},{id:"indigo", light:"#e0e7ff",dark:"#4f46e5"},
+  {id:"violet", light:"#ede9fe",dark:"#7c3aed"},{id:"fuchsia",light:"#fae8ff",dark:"#c026d3"},
+  {id:"sky",    light:"#e0f2fe",dark:"#0284c7"},{id:"cyan",   light:"#cffafe",dark:"#0891b2"},
 ];
 const GC = Object.fromEntries(GROUP_COLORS.map(c=>[c.id,c]));
 
-const fbGet      = path => get(ref(db,rp(path))).then(s=>s.exists()?s.val():null).catch(()=>null);
 const toArr      = v => !v?[]:Array.isArray(v)?v.filter(Boolean):Object.values(v).filter(Boolean);
 const logObj     = arr => Object.fromEntries(arr.map(e=>[e.id,e]));
 const pad        = n => String(n).padStart(2,"0");
@@ -47,21 +44,9 @@ const sortNums   = arr => [...arr].sort((a,b)=>a-b);
 const numList    = arr => arr.length?arr.map(n=>`#${n}`).join(", "):null;
 const getRtGroup = (n,groups) => (groups||[]).find(g=>(g.rts||[]).includes(n))||null;
 
-// CSV name parsing helpers
-const stripPrefix = s => {
-  const t=s.trim();
-  if(!t||t.startsWith('(')) return null;
-  const ci=t.indexOf(':');
-  return ci===-1?t:t.slice(ci+1).trim();
-};
-const extractStmsName = field => {
-  if(!field) return null;
-  return stripPrefix(field.split('\n')[0]);
-};
-const extractTcNames = field => {
-  if(!field) return [];
-  return field.split(/[,\n]/).map(stripPrefix).filter(Boolean);
-};
+const stripPrefix = s => { const t=s.trim(); if(!t||t.startsWith('('))return null; const ci=t.indexOf(':'); return ci===-1?t:t.slice(ci+1).trim(); };
+const extractStmsName = field => { if(!field)return null; return stripPrefix(field.split('\n')[0]); };
+const extractTcNames  = field => { if(!field)return []; return field.split(/[,\n]/).map(stripPrefix).filter(Boolean); };
 
 const sendNotification = payload =>
   fetch('/.netlify/functions/send-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
@@ -92,8 +77,7 @@ function SelectGrid({ count, outSet, unavailSet=new Set(), selected, onToggle, c
     <div className="grid gap-1" style={{gridTemplateColumns:`repeat(${Math.min(count,10)},minmax(0,1fr))`}}>
       {Array.from({length:count},(_,i)=>i+1).map(n=>{
         const isOut=outSet.has(n),isUnavail=unavailSet.has(n),isSel=selected.includes(n);
-        const grp=color==="blue"?getRtGroup(n,groups):null;
-        const gc=grp?GC[grp.color]:null;
+        const grp=color==="blue"?getRtGroup(n,groups):null; const gc=grp?GC[grp.color]:null;
         let cls="aspect-square rounded text-xs font-bold flex items-center justify-center transition-all"; let sty={};
         if(isOut) cls+=" bg-slate-200 text-slate-400 cursor-not-allowed";
         else if(isUnavail) cls+=" bg-amber-100 text-amber-400 cursor-not-allowed";
@@ -131,15 +115,14 @@ function GroupRtGrid({ count, groupRts, otherRts=[], color, onToggle }) {
     <div className="grid gap-1" style={{gridTemplateColumns:`repeat(${Math.min(count,10)},minmax(0,1fr))`}}>
       {Array.from({length:count},(_,i)=>i+1).map(n=>{ const inG=groupRts.includes(n),inO=otherRts.includes(n); return (
         <button key={n} disabled={inO} onClick={()=>onToggle(n)} className="aspect-square rounded text-xs font-bold flex items-center justify-center transition-all"
-          style={inO?{backgroundColor:"#e2e8f0",color:"#94a3b8",cursor:"not-allowed"}:inG?{backgroundColor:gc.dark,color:"white"}:{backgroundColor:"#f1f5f9",color:"#475569"}}
-          title={inO?"In another group":undefined}>{n}</button>
+          style={inO?{backgroundColor:"#e2e8f0",color:"#94a3b8",cursor:"not-allowed"}:inG?{backgroundColor:gc.dark,color:"white"}:{backgroundColor:"#f1f5f9",color:"#475569"}}>{n}</button>
       );})}
     </div>
   );
 }
 
 function GroupLegend({ groups }) {
-  if(!groups?.length) return null;
+  if(!groups?.length)return null;
   return (
     <div className="mt-2 flex flex-wrap gap-2">
       {groups.map(g=>{ const gc=GC[g.color]||GC.purple; return (
@@ -175,11 +158,13 @@ export default function App() {
   const [newStaff,setNewStaff]     = useState({name:"",role:"STMS"});
   const [editingId,setEditingId]   = useState(null);
   const [editRole,setEditRole]     = useState("STMS");
-  const [editPin,setEditPin]       = useState("");
+
+  // Settings
   const [settingsUnlocked,setSettingsUnlocked] = useState(false);
   const [settingsPw,setSettingsPw] = useState("");
   const [settingsPwErr,setSettingsPwErr] = useState("");
   const [newEmail,setNewEmail]     = useState("");
+  const [editPins,setEditPins]     = useState({});
 
   // RT colour groups
   const [newGroup,setNewGroup]             = useState({label:"",color:"purple",rts:[]});
@@ -188,14 +173,14 @@ export default function App() {
   const [editGroup,setEditGroup]           = useState(null);
 
   // CSV / schedule
-  const [csvParsed,setCsvParsed]   = useState(null); // { stmsName: { staffId, tcs[] } }
+  const [csvParsed,setCsvParsed]   = useState(null);
   const [savedMappings,setSavedMappings] = useState({});
   const [csvSaving,setCsvSaving]   = useState(false);
   const [csvSaved,setCsvSaved]     = useState(false);
 
   // ── Firebase ────────────────────────────────────────────────────────────────
   useEffect(()=>{
-    const check=()=>{ if(loadedRef.current.log&&loadedRef.current.staff&&loadedRef.current.settings) setLoading(false); };
+    const check=()=>{ if(loadedRef.current.log&&loadedRef.current.staff&&loadedRef.current.settings)setLoading(false); };
     const unsubLog=onValue(ref(db,rp('log')),snap=>{ setLog(toArr(snap.val()).filter(e=>e?.name)); loadedRef.current.log=true; check(); });
     const unsubStaff=onValue(ref(db,rp('staff')),snap=>{ setStaff(toArr(snap.val())); loadedRef.current.staff=true; check(); });
     const unsubSettings=onValue(ref(db,rp('settings')),snap=>{
@@ -240,9 +225,9 @@ export default function App() {
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   const submitCheckout=()=>{
-    if(!cf.name.trim()) return setCfErr("Please enter a name.");
-    if(cf.rts.length+cf.wands.length+cf.lights.length===0) return setCfErr("Please select at least one piece of gear.");
-    const sig=sigRef.current?.get(); if(!sig) return setCfErr("Please provide a signature.");
+    if(!cf.name.trim())return setCfErr("Please enter a name.");
+    if(cf.rts.length+cf.wands.length+cf.lights.length===0)return setCfErr("Please select at least one piece of gear.");
+    const sig=sigRef.current?.get(); if(!sig)return setCfErr("Please provide a signature.");
     const entry={id:Date.now().toString(),name:cf.name.trim(),timeOut:new Date(cf.timeOut).toISOString(),
       rts:cf.rts,wands:cf.wands,lights:cf.lights,channel:cf.channel||null,signature:sig,
       returnedAt:null,retRts:null,retWands:null,retLights:null,comments:"",tcAssignments:{}};
@@ -276,92 +261,36 @@ export default function App() {
 
   const addStaff=()=>{ if(!newStaff.name.trim())return; const s=[...staff,{id:Date.now().toString(),name:newStaff.name.trim(),role:newStaff.role}]; setStaff(s); fbWrite('staff',s); setNewStaff({name:"",role:"STMS"}); };
   const deleteStaff=id=>{ const s=staff.filter(x=>x.id!==id); setStaff(s); fbWrite('staff',s); };
-  const saveEdit=id=>{
-    const existing=staff.find(x=>x.id===id);
-    const updated={...existing,role:editRole};
-    if(editRole==='STMS'&&editPin.length===4) updated.pin=editPin;
-    const s=staff.map(x=>x.id===id?updated:x); setStaff(s); fbWrite('staff',s);
-    setEditingId(null); setEditPin("");
-  };
+  const saveEdit=id=>{ const ex=staff.find(x=>x.id===id); const s=staff.map(x=>x.id===id?{...ex,role:editRole}:x); setStaff(s); fbWrite('staff',s); setEditingId(null); };
+  const savePin=id=>{ if(!editPins[id]||editPins[id].length!==4)return; const s=staff.map(x=>x.id===id?{...x,pin:editPins[id]}:x); setStaff(s); fbWrite('staff',s); setEditPins(p=>({...p,[id]:''})); };
 
   const updateSettings=updates=>{ const s={...settings,...updates}; setSettings(s); fbWrite('settings',s); };
   const toggleUnavail=(key,n)=>{ const c=settings[key]||[]; updateSettings({[key]:c.includes(n)?c.filter(x=>x!==n):[...c,n]}); };
   const addEmail=()=>{ if(!newEmail.trim()||!/\S+@\S+\.\S+/.test(newEmail))return; updateSettings({emailList:[...settings.emailList,newEmail.trim().toLowerCase()]}); setNewEmail(""); };
   const removeEmail=email=>updateSettings({emailList:settings.emailList.filter(e=>e!==email)});
 
-  const loadSavedMappings=async()=>{
-    const data=await fbGet('name_mappings');
-    if(data) setSavedMappings(data);
-  };
+  const loadSavedMappings=async()=>{ const d=await fbGet('name_mappings'); if(d)setSavedMappings(d); };
+  const checkPw=()=>{ if(settingsPw===SETTINGS_PW){setSettingsUnlocked(true);setSettingsPwErr("");loadSavedMappings();}else setSettingsPwErr("Incorrect password."); setSettingsPw(""); };
 
-  const checkPw=()=>{
-    if(settingsPw===SETTINGS_PW){ setSettingsUnlocked(true); setSettingsPwErr(""); loadSavedMappings(); }
-    else setSettingsPwErr("Incorrect password.");
-    setSettingsPw("");
-  };
-
-  // RT colour groups
-  const addGroup=()=>{
-    if(!newGroup.label.trim())return;
-    const g={id:Date.now().toString(),label:newGroup.label.trim(),color:newGroup.color,rts:newGroup.rts};
-    updateSettings({rtGroups:[...(settings.rtGroups||[]),g]});
-    setNewGroup({label:"",color:"purple",rts:[]}); setShowAddGroup(false);
-  };
-  const saveGroup=()=>{
-    if(!editGroup?.label.trim())return;
-    const gs=(settings.rtGroups||[]).map(g=>g.id===editingGroupId?{...editGroup}:g);
-    updateSettings({rtGroups:gs}); setEditingGroupId(null); setEditGroup(null);
-  };
+  const addGroup=()=>{ if(!newGroup.label.trim())return; const g={id:Date.now().toString(),label:newGroup.label.trim(),color:newGroup.color,rts:newGroup.rts}; updateSettings({rtGroups:[...(settings.rtGroups||[]),g]}); setNewGroup({label:"",color:"purple",rts:[]}); setShowAddGroup(false); };
+  const saveGroup=()=>{ if(!editGroup?.label.trim())return; updateSettings({rtGroups:(settings.rtGroups||[]).map(g=>g.id===editingGroupId?{...editGroup}:g)}); setEditingGroupId(null); setEditGroup(null); };
   const deleteGroup=id=>updateSettings({rtGroups:(settings.rtGroups||[]).filter(g=>g.id!==id)});
 
-  // CSV / schedule
-  const handleCSVUpload=file=>{
-    Papa.parse(file,{
-      header:true, skipEmptyLines:true,
-      complete:results=>{
-        const rows=results.data.filter(r=>r['Region/Depot']?.trim()===REGION_LABEL);
-        const schedule={};
-        rows.forEach(row=>{
-          const stmsName=extractStmsName(row['STMS+Truck']||'');
-          if(!stmsName) return;
-          const tcs=[...extractTcNames(row["TC's"]||''),...extractTcNames(row['Drivers+Trucks']||'')];
-          if(!schedule[stmsName]) schedule[stmsName]={tcs:[]};
-          tcs.forEach(tc=>{ if(!schedule[stmsName].tcs.includes(tc)) schedule[stmsName].tcs.push(tc); });
-        });
-        const parsed={};
-        Object.entries(schedule).forEach(([csvName,data])=>{
-          parsed[csvName]={...data,staffId:savedMappings[csvName]||null};
-        });
-        setCsvParsed(parsed);
-      }
-    });
-  };
+  const handleCSVUpload=file=>{ Papa.parse(file,{ header:true,skipEmptyLines:true, complete:results=>{ const rows=results.data.filter(r=>r['Region/Depot']?.trim()===REGION_LABEL); const schedule={}; rows.forEach(row=>{ const stmsName=extractStmsName(row['STMS+Truck']||''); if(!stmsName)return; const tcs=[...extractTcNames(row["TC's"]||''),...extractTcNames(row['Drivers+Trucks']||'')]; if(!schedule[stmsName])schedule[stmsName]={tcs:[]}; tcs.forEach(tc=>{if(!schedule[stmsName].tcs.includes(tc))schedule[stmsName].tcs.push(tc);}); }); const parsed={}; Object.entries(schedule).forEach(([n,d])=>{ parsed[n]={...d,staffId:savedMappings[n]||null}; }); setCsvParsed(parsed); } }); };
+  const saveSchedule=async()=>{ setCsvSaving(true); const nm={...savedMappings},sc={}; Object.entries(csvParsed).forEach(([n,d])=>{ if(d.staffId){nm[n]=d.staffId;sc[d.staffId]=d.tcs;} }); await Promise.all([fbWrite('name_mappings',nm),fbWrite(`schedule/${todayKey()}`,sc)]); setSavedMappings(nm); setCsvParsed(null); setCsvSaving(false); setCsvSaved(true); setTimeout(()=>setCsvSaved(false),3000); };
 
-  const saveSchedule=async()=>{
-    setCsvSaving(true);
-    const newMappings={...savedMappings};
-    const schedule={};
-    Object.entries(csvParsed).forEach(([csvName,data])=>{
-      if(data.staffId){ newMappings[csvName]=data.staffId; schedule[data.staffId]=data.tcs; }
-    });
-    await Promise.all([fbWrite('name_mappings',newMappings),fbWrite(`schedule/${todayKey()}`,schedule)]);
-    setSavedMappings(newMappings);
-    setCsvParsed(null); setCsvSaving(false); setCsvSaved(true);
-    setTimeout(()=>setCsvSaved(false),3000);
-  };
-
-  // Derived
   const filtered=staff.filter(s=>s.name.toLowerCase().includes(pickerSearch.toLowerCase()));
   const stmsFiltered=filtered.filter(s=>s.role==="STMS").sort((a,b)=>a.name.localeCompare(b.name));
   const tcFiltered=filtered.filter(s=>s.role==="TC").sort((a,b)=>a.name.localeCompare(b.name));
   const stmsAll=staff.filter(s=>s.role==="STMS").sort((a,b)=>a.name.localeCompare(b.name));
   const tcAll=staff.filter(s=>s.role==="TC").sort((a,b)=>a.name.localeCompare(b.name));
+  const sortedLog=[...log].sort((a,b)=>new Date(b.timeOut)-new Date(a.timeOut));
   const re=log.find(e=>e.id===returnId);
   const totalSel=cf.rts.length+cf.wands.length+cf.lights.length;
   const showBack=page!==PAGES.DASHBOARD;
 
-  if(loading) return (
-    <div className="flex flex-col items-center justify-center h-screen gap-3 text-slate-400">
+  if(loading)return(
+    <div className="flex flex-col items-center justify-center h-screen gap-3 text-slate-400 font-sans">
       <div className="text-3xl animate-pulse">📻</div>
       <p className="text-sm">Connecting to database…</p>
     </div>
@@ -599,16 +528,16 @@ export default function App() {
         {page===PAGES.LOG&&(
           <div>
             <div className="flex items-baseline justify-between mb-4"><h2 className="text-lg font-bold text-slate-800">Full Log</h2><span className="text-sm text-slate-500">{log.length} entries</span></div>
-            {log.length===0?<div className="text-center py-20 text-slate-400 text-sm">No entries yet.</div>:(
+            {sortedLog.length===0?<div className="text-center py-20 text-slate-400 text-sm">No entries yet.</div>:(
               <div className="flex flex-col gap-3">
-                {[...log].sort((a,b)=>new Date(b.timeOut)-new Date(a.timeOut)).map(e=>{
+                {sortedLog.map(e=>{
                   const isOut=!e.returnedAt;
                   const tRts=e.rts||[],tWands=e.wands||[],tLights=e.lights||[];
                   const rRts=e.retRts||[],rWands=e.retWands||[],rLights=e.retLights||[];
                   const mRts=tRts.filter(n=>!rRts.includes(n)),mWands=tWands.filter(n=>!rWands.includes(n)),mLights=tLights.filter(n=>!rLights.includes(n));
                   const anyMissing=mRts.length+mWands.length+mLights.length>0;
                   const tcA=e.tcAssignments||{};
-                  const hasTc=Object.keys(tcA).length>0;
+                  const hasTc=Object.entries(tcA).some(([,v])=>v);
                   return (
                     <div key={e.id} className={`bg-white rounded-2xl shadow-sm border p-4 ${isOut?"border-orange-300":anyMissing?"border-red-300":"border-green-200"}`}>
                       <div className="flex items-start justify-between mb-2">
@@ -635,7 +564,9 @@ export default function App() {
                       {hasTc&&(
                         <div className="mt-2 text-xs bg-indigo-50 rounded-lg px-3 py-1.5">
                           <span className="font-semibold text-indigo-700">TC Assignments: </span>
-                          <span className="text-slate-600">{Object.entries(tcA).map(([rt,tc])=>`RT #${rt} → ${tc}`).join(' · ')}</span>
+                          <span className="text-slate-600">
+                            {Object.entries(tcA).filter(([,v])=>v).map(([k,v])=>{ const[type,num]=k.split('_'); const emoji=type==='rt'?'📻':type==='wand'?'🟡':'💡'; return `${emoji}#${num} → ${v}`; }).join(' · ')}
+                          </span>
                         </div>
                       )}
                       {!isOut&&anyMissing&&<div className="mt-2 text-xs text-red-700 bg-red-50 rounded-lg px-3 py-1.5">⚠️ Missing:{mRts.length>0&&` RTs ${numList(sortNums(mRts))}`}{mWands.length>0&&` Wands ${numList(sortNums(mWands))}`}{mLights.length>0&&` Lights ${numList(sortNums(mLights))}`}</div>}
@@ -669,29 +600,20 @@ export default function App() {
                     <div className="flex flex-col gap-2">
                       {members.map(s=>(
                         <div key={s.id} className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center justify-between">
-                          <div className="flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-3">
                             <span className="font-medium text-slate-800">{s.name}</span>
                             {editingId===s.id?(
-                              <>
-                                <select className="border border-slate-300 rounded-lg px-2 py-1 text-xs focus:outline-none bg-white" value={editRole} onChange={e=>setEditRole(e.target.value)}>{ROLES.map(r=><option key={r}>{r}</option>)}</select>
-                                {editRole==='STMS'&&(
-                                  <input type="text" inputMode="numeric" maxLength={4} placeholder={s.pin?"••••":"PIN"} value={editPin} onChange={e=>setEditPin(e.target.value.replace(/\D/g,''))} className="border border-slate-300 rounded-lg px-2 py-1 text-xs w-14 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-                                )}
-                              </>
+                              <select className="border border-slate-300 rounded-lg px-2 py-1 text-xs focus:outline-none bg-white" value={editRole} onChange={e=>setEditRole(e.target.value)}>{ROLES.map(r=><option key={r}>{r}</option>)}</select>
                             ):(
-                              <div className="flex items-center gap-1.5">
-                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.role==="STMS"?"bg-blue-100 text-blue-700":"bg-purple-100 text-purple-700"}`}>{s.role}</span>
-                                {s.role==='STMS'&&s.pin&&<span className="text-xs text-slate-400">PIN set</span>}
-                                {s.role==='STMS'&&!s.pin&&<span className="text-xs text-amber-500">No PIN</span>}
-                              </div>
+                              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.role==="STMS"?"bg-blue-100 text-blue-700":"bg-purple-100 text-purple-700"}`}>{s.role}</span>
                             )}
                           </div>
-                          <div className="flex gap-2 shrink-0">
+                          <div className="flex gap-2">
                             {editingId===s.id?(
                               <><button onClick={()=>saveEdit(s.id)} className="text-xs bg-green-100 text-green-700 font-semibold px-2.5 py-1 rounded-lg hover:bg-green-200 transition">Save</button>
-                              <button onClick={()=>{setEditingId(null);setEditPin("");}} className="text-xs bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg hover:bg-slate-200 transition">Cancel</button></>
+                              <button onClick={()=>setEditingId(null)} className="text-xs bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg hover:bg-slate-200 transition">Cancel</button></>
                             ):(
-                              <><button onClick={()=>{setEditingId(s.id);setEditRole(s.role);setEditPin("");}} className="text-xs bg-slate-100 text-slate-600 font-medium px-2.5 py-1 rounded-lg hover:bg-slate-200 transition">Edit</button>
+                              <><button onClick={()=>{setEditingId(s.id);setEditRole(s.role);}} className="text-xs bg-slate-100 text-slate-600 font-medium px-2.5 py-1 rounded-lg hover:bg-slate-200 transition">Edit</button>
                               <button onClick={()=>deleteStaff(s.id)} className="text-xs bg-red-50 text-red-500 font-medium px-2.5 py-1 rounded-lg hover:bg-red-100 transition">Delete</button></>
                             )}
                           </div>
@@ -742,8 +664,7 @@ export default function App() {
                               <span className="text-sm font-medium text-slate-800">{csvName}</span>
                               <span className="text-xs text-slate-400">{data.tcs.length} TC{data.tcs.length!==1?"s":""}</span>
                             </div>
-                            <select className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              value={data.staffId||''} onChange={e=>setCsvParsed(p=>({...p,[csvName]:{...p[csvName],staffId:e.target.value||null}}))}>
+                            <select className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" value={data.staffId||''} onChange={e=>setCsvParsed(p=>({...p,[csvName]:{...p[csvName],staffId:e.target.value||null}}))}>
                               <option value="">— Select staff member —</option>
                               {stmsAll.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
@@ -758,6 +679,37 @@ export default function App() {
                     </div>
                   )}
                   {csvSaved&&<p className="text-xs text-green-600 text-center mt-2 font-medium">✓ Schedule saved for today</p>}
+                </div>
+
+                {/* Staff PINs */}
+                <div className="bg-white rounded-2xl shadow-sm p-4">
+                  <h3 className="text-sm font-bold text-slate-700 mb-1">Staff PINs</h3>
+                  <p className="text-xs text-slate-400 mb-3">4-digit PINs are required to log into the Site Tracker app. Set a PIN for each staff member who needs access.</p>
+                  {staff.length===0?<p className="text-xs text-slate-400 text-center py-3">No staff added yet.</p>:(
+                    <div className="flex flex-col">
+                      {[...staff].sort((a,b)=>a.name.localeCompare(b.name)).map((s,i,arr)=>(
+                        <div key={s.id} className={`flex items-center justify-between py-2.5 ${i<arr.length-1?"border-b border-slate-100":""}`}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-medium text-sm text-slate-800 truncate">{s.name}</span>
+                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${s.role==="STMS"?"bg-blue-100 text-blue-700":"bg-purple-100 text-purple-700"}`}>{s.role}</span>
+                            {s.pin?<span className="text-xs text-green-600 shrink-0">●</span>:<span className="text-xs text-amber-500 shrink-0">○</span>}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-2">
+                            <input type="text" inputMode="numeric" maxLength={4}
+                              placeholder={s.pin?"Change":"Set PIN"}
+                              value={editPins[s.id]||''}
+                              onChange={e=>setEditPins(p=>({...p,[s.id]:e.target.value.replace(/\D/g,'')}))}
+                              className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-16 text-center focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                            <button onClick={()=>savePin(s.id)} disabled={!editPins[s.id]||editPins[s.id].length!==4}
+                              className="text-xs bg-blue-100 text-blue-700 font-semibold px-2.5 py-1.5 rounded-lg hover:bg-blue-200 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-300 mt-3">● PIN set &nbsp; ○ No PIN</p>
                 </div>
 
                 {/* Gear Counts */}
