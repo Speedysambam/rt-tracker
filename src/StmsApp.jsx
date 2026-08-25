@@ -14,8 +14,8 @@ const _cfg = {
 const fbApp  = getApps().length ? getApp() : initializeApp(_cfg);
 const db     = getDatabase(fbApp);
 
-const REGION       = import.meta.env.VITE_REGION || '';
-const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'Hamilton';
+const REGION       = (import.meta.env.VITE_REGION || '').trim().toLowerCase();
+const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'All Regions';
 const rp           = p => REGION ? `${REGION}/${p}` : p;
 const fbSet        = (path,data) => set(ref(db, rp(path)), data).catch(console.error);
 const toArr        = v => !v?[]:Array.isArray(v)?v.filter(Boolean):Object.values(v).filter(Boolean);
@@ -23,6 +23,26 @@ const fmtTime      = iso => iso?new Date(iso).toLocaleTimeString("en-NZ",{hour:"
 const fmtDate      = iso => iso?new Date(iso).toLocaleDateString("en-NZ",{day:"2-digit",month:"short",year:"numeric"}):"—";
 const todayKey     = () => new Date().toISOString().split('T')[0];
 const sortNums     = arr => [...arr].sort((a,b)=>a-b);
+const filterVisibleRegion = list => {
+  if(!REGION) return list;
+  return list.filter(item => !item.__region || item.__region.toLowerCase() === REGION);
+};
+const mergeRegionData = (root, key) => {
+  if(!root || typeof root !== 'object') return [];
+  const merged = [];
+  if(root[key]) merged.push(...toArr(root[key]).map(item => ({...item, __region: ''})));
+  Object.entries(root).forEach(([region, regionData]) => {
+    if(!region || typeof regionData !== 'object' || Array.isArray(regionData) || !regionData[key]) return;
+    merged.push(...toArr(regionData[key]).map(item => ({...item, __region: region})));
+  });
+  const seen = new Set();
+  return merged.filter(item => {
+    const id = item.id || item.name || JSON.stringify(item);
+    if(seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
 
 const GROUP_COLORS = [
   {id:"purple", light:"#f3e8ff",dark:"#9333ea"},{id:"indigo", light:"#e0e7ff",dark:"#4f46e5"},
@@ -80,10 +100,10 @@ export default function StmsApp() {
 
   // Load STMS list for login
   useEffect(()=>{
-    const unsub=onValue(ref(db,rp('staff')),snap=>{
-      const all=toArr(snap.val());
-      setStmsList(all.filter(s=>s.role==='STMS').sort((a,b)=>a.name.localeCompare(b.name)));
-      setPhase('select');
+    const unsub=onValue(ref(db),snap=>{
+      const all=filterVisibleRegion(mergeRegionData(snap.val(), 'staff')).filter(s=>s.role==='STMS');
+      setStmsList(all.sort((a,b)=>a.name.localeCompare(b.name)));
+      setPhase('pin');
     });
     return()=>unsub();
   },[]);
@@ -92,17 +112,23 @@ export default function StmsApp() {
   useEffect(()=>{
     if(phase!=='board'||!selectedStms) return;
 
-    const unsubLog=onValue(ref(db,rp('log')),snap=>{
-      setLog(toArr(snap.val()).filter(e=>e?.name));
+    const unsubLog=onValue(ref(db),snap=>{
+      setLog(filterVisibleRegion(mergeRegionData(snap.val(), 'log')).filter(e=>e?.name));
     });
-    const unsubSettings=onValue(ref(db,rp('settings')),snap=>{
-      const d=snap.val()||{};
-      setRtGroups(toArr(d.rtGroups).map(g=>({...g,rts:toArr(g.rts)})));
+    const unsubSettings=onValue(ref(db),snap=>{
+      const root=snap.val()||{};
+      const settingsEntry = root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
+      setRtGroups(toArr(settingsEntry.rtGroups).map(g=>({...g,rts:toArr(g.rts)})));
     });
     const unsubConn=onValue(ref(db,'.info/connected'),snap=>setConnected(snap.val()===true));
 
-    get(ref(db,rp(`schedule/${todayKey()}/${selectedStms.id}`))).then(snap=>{
-      if(snap.exists()){ const d=snap.val(); setTodayTcs(Array.isArray(d)?d:Object.values(d)); }
+    const schedulePaths = [
+      `schedule/${todayKey()}/${selectedStms.id}`,
+      ...(selectedStms.__region ? [`${selectedStms.__region}/schedule/${todayKey()}/${selectedStms.id}`] : []),
+    ];
+    Promise.all(schedulePaths.map(path => get(ref(db, path)).then(snap => snap.exists() ? snap.val() : null))).then(results => {
+      const payload = results.find(Boolean);
+      if(payload){ setTodayTcs(Array.isArray(payload)?payload:Object.values(payload)); }
       else setTodayTcs([]);
     });
 
@@ -110,9 +136,23 @@ export default function StmsApp() {
   },[phase,selectedStms]);
 
   const handlePinComplete=pin=>{
-    if(!selectedStms.pin){ setPinError('No PIN set — ask your manager to set one in the Staff tab.'); setPinValue(''); return; }
-    if(pin!==selectedStms.pin){ setPinError('Incorrect PIN. Try again.'); setPinValue(''); return; }
-    setPinError(''); setPhase('board');
+    const matched = stmsList.find(s => String(s.pin ?? '').trim() === String(pin).trim());
+
+    if(!matched){
+      setPinError('PIN not found. Please try again.');
+      setPinValue('');
+      return;
+    }
+
+    if(!matched.pin){
+      setPinError('No PIN set — ask your manager to set one in the Staff tab.');
+      setPinValue('');
+      return;
+    }
+
+    setSelectedStms(matched);
+    setPinError('');
+    setPhase('board');
   };
 
   const assignTc=(logId,gearType,num,tcName)=>{
@@ -125,7 +165,7 @@ export default function StmsApp() {
   const myCheckouts=log.filter(e=>e.name===selectedStms?.name&&!e.returnedAt);
   const filteredTcs=tcFilter?todayTcs.filter(tc=>tc.toLowerCase().includes(tcFilter.toLowerCase())):todayTcs;
 
-  const logout=()=>{ setPhase('select'); setSelectedStms(null); setLog([]); setTodayTcs([]); setPinValue(''); setPinError(''); };
+  const logout=()=>{ setPhase('pin'); setSelectedStms(null); setLog([]); setTodayTcs([]); setPinValue(''); setPinError(''); };
 
   // ── LOADING ──────────────────────────────────────────────────────────────────
   if(phase==='loading') return (
@@ -135,51 +175,27 @@ export default function StmsApp() {
     </div>
   );
 
-  // ── SELECT NAME ──────────────────────────────────────────────────────────────
-  if(phase==='select') return (
+  // ── PIN ENTRY ────────────────────────────────────────────────────────────────
+  if(phase==='pin') return (
     <div className="min-h-screen bg-slate-100 font-sans">
       <div className="bg-blue-800 text-white px-4 py-4 text-center shadow-md">
         <div className="font-bold text-lg">📻 Site Tracker</div>
         <div className="text-blue-300 text-sm">{REGION_LABEL}</div>
       </div>
-      <div className="px-4 py-8 max-w-sm mx-auto">
-        <h2 className="text-xl font-bold text-slate-800 mb-1 text-center">Who are you?</h2>
-        <p className="text-sm text-slate-500 text-center mb-6">Select your name to continue</p>
+      <div className="px-4 py-10 max-w-sm mx-auto">
         {stmsList.length===0?(
           <div className="text-center text-slate-400 text-sm py-12">No STMSs found. Ask your manager to add staff members.</div>
         ):(
-          <div className="flex flex-col gap-2">
-            {stmsList.map(s=>(
-              <button key={s.id} onClick={()=>{setSelectedStms(s);setPinValue('');setPinError('');setPhase('pin');}}
-                className="w-full bg-white rounded-2xl shadow-sm border border-slate-200 px-5 py-4 text-left hover:border-blue-400 hover:bg-blue-50 active:scale-95 transition-all flex items-center justify-between">
-                <span className="font-semibold text-slate-800 text-base">{s.name}</span>
-                <span className="text-blue-400 text-lg">›</span>
-              </button>
-            ))}
-          </div>
+          <>
+            <h2 className="text-xl font-bold text-slate-800 mb-2 text-center">Enter PIN</h2>
+            {pinError?(
+              <p className="text-sm text-red-500 text-center mb-6 bg-red-50 rounded-xl px-3 py-2">{pinError}</p>
+            ):(
+              <p className="text-sm text-slate-500 text-center mb-6">Enter your 4-digit PIN</p>
+            )}
+            <PinPad value={pinValue} onChange={v=>{setPinValue(v);if(pinError)setPinError('');}} onComplete={handlePinComplete}/>
+          </>
         )}
-      </div>
-    </div>
-  );
-
-  // ── PIN ENTRY ────────────────────────────────────────────────────────────────
-  if(phase==='pin') return (
-    <div className="min-h-screen bg-slate-100 font-sans">
-      <div className="bg-blue-800 text-white px-4 py-3 flex items-center gap-3 shadow-md">
-        <button onClick={()=>{setPhase('select');setPinValue('');setPinError('');}} className="text-blue-200 hover:text-white text-2xl leading-none">‹</button>
-        <div>
-          <div className="font-bold">📻 Site Tracker</div>
-          <div className="text-blue-300 text-xs">{selectedStms?.name}</div>
-        </div>
-      </div>
-      <div className="px-4 py-10 max-w-sm mx-auto">
-        <h2 className="text-xl font-bold text-slate-800 mb-2 text-center">Enter PIN</h2>
-        {pinError?(
-          <p className="text-sm text-red-500 text-center mb-6 bg-red-50 rounded-xl px-3 py-2">{pinError}</p>
-        ):(
-          <p className="text-sm text-slate-500 text-center mb-6">Enter your 4-digit PIN</p>
-        )}
-        <PinPad value={pinValue} onChange={v=>{setPinValue(v);if(pinError)setPinError('');}} onComplete={handlePinComplete}/>
       </div>
     </div>
   );

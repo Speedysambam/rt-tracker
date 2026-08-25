@@ -14,8 +14,8 @@ const _app = initializeApp({
 });
 const db = getDatabase(_app);
 
-const REGION       = import.meta.env.VITE_REGION || '';
-const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'Hamilton';
+const REGION       = (import.meta.env.VITE_REGION || '').trim().toLowerCase();
+const REGION_LABEL = REGION ? REGION.charAt(0).toUpperCase()+REGION.slice(1) : 'All Regions';
 const rp           = p => REGION ? `${REGION}/${p}` : p;
 const fbWrite      = (path,data) => set(ref(db,rp(path)),data).catch(console.error);
 const fbGet        = path => get(ref(db,rp(path))).then(s=>s.exists()?s.val():null).catch(()=>null);
@@ -33,6 +33,26 @@ const GROUP_COLORS = [
 const GC = Object.fromEntries(GROUP_COLORS.map(c=>[c.id,c]));
 
 const toArr      = v => !v?[]:Array.isArray(v)?v.filter(Boolean):Object.values(v).filter(Boolean);
+const mergeRegionData = (root, key) => {
+  if(!root || typeof root !== 'object') return [];
+  const merged = [];
+  if(root[key]) merged.push(...toArr(root[key]).map(item => ({...item, __region: ''})));
+  Object.entries(root).forEach(([region, regionData]) => {
+    if(!region || typeof regionData !== 'object' || Array.isArray(regionData) || !regionData[key]) return;
+    merged.push(...toArr(regionData[key]).map(item => ({...item, __region: region})));
+  });
+  const seen = new Set();
+  return merged.filter(item => {
+    const id = item.id || item.name || JSON.stringify(item);
+    if(seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
+const filterVisibleRegion = list => {
+  if(!REGION) return list;
+  return list.filter(item => !item.__region || item.__region.toLowerCase() === REGION);
+};
 const logObj     = arr => Object.fromEntries(arr.map(e=>[e.id,e]));
 const pad        = n => String(n).padStart(2,"0");
 const fmt        = ms => { const m=Math.floor(ms/60000),h=Math.floor(m/60); return h>0?`${h}h ${m%60}m`:`${m}m`; };
@@ -165,6 +185,7 @@ export default function App() {
   const [settingsPwErr,setSettingsPwErr] = useState("");
   const [newEmail,setNewEmail]     = useState("");
   const [editPins,setEditPins]     = useState({});
+  const [showPins,setShowPins]     = useState({});
 
   // RT colour groups
   const [newGroup,setNewGroup]             = useState({label:"",color:"purple",rts:[]});
@@ -181,10 +202,17 @@ export default function App() {
   // ── Firebase ────────────────────────────────────────────────────────────────
   useEffect(()=>{
     const check=()=>{ if(loadedRef.current.log&&loadedRef.current.staff&&loadedRef.current.settings)setLoading(false); };
-    const unsubLog=onValue(ref(db,rp('log')),snap=>{ setLog(toArr(snap.val()).filter(e=>e?.name)); loadedRef.current.log=true; check(); });
-    const unsubStaff=onValue(ref(db,rp('staff')),snap=>{ setStaff(toArr(snap.val())); loadedRef.current.staff=true; check(); });
-    const unsubSettings=onValue(ref(db,rp('settings')),snap=>{
-      const d=snap.val()||{};
+    const unsubLog=onValue(ref(db),snap=>{
+      setLog(mergeRegionData(snap.val(),'log').filter(e=>e?.name));
+      loadedRef.current.log=true; check();
+    });
+    const unsubStaff=onValue(ref(db),snap=>{
+      setStaff(mergeRegionData(snap.val(),'staff'));
+      loadedRef.current.staff=true; check();
+    });
+    const unsubSettings=onValue(ref(db),snap=>{
+      const root=snap.val()||{};
+      const d = root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
       setSettings({
         rtCount:d.rtCount??30,wandCount:d.wandCount??10,lightCount:d.lightCount??5,
         unavailableRts:toArr(d.unavailableRts),unavailableWands:toArr(d.unavailableWands),
@@ -262,7 +290,19 @@ export default function App() {
   const addStaff=()=>{ if(!newStaff.name.trim())return; const s=[...staff,{id:Date.now().toString(),name:newStaff.name.trim(),role:newStaff.role}]; setStaff(s); fbWrite('staff',s); setNewStaff({name:"",role:"STMS"}); };
   const deleteStaff=id=>{ const s=staff.filter(x=>x.id!==id); setStaff(s); fbWrite('staff',s); };
   const saveEdit=id=>{ const ex=staff.find(x=>x.id===id); const s=staff.map(x=>x.id===id?{...ex,role:editRole}:x); setStaff(s); fbWrite('staff',s); setEditingId(null); };
-  const savePin=id=>{ if(!editPins[id]||editPins[id].length!==4)return; const s=staff.map(x=>x.id===id?{...x,pin:editPins[id]}:x); setStaff(s); fbWrite('staff',s); setEditPins(p=>({...p,[id]:''})); };
+  const savePin=id=>{ 
+    const pin=(editPins[id]||'').trim();
+    if(!pin||pin.length!==4)return;
+
+    const duplicate = staff.some(s => s.id !== id && s.role === 'STMS' && String(s.pin ?? '').trim() === pin);
+    if(duplicate){
+      window.alert('That PIN is already assigned to another STMS. Please choose a different 4-digit PIN.');
+      return;
+    }
+
+    const s=staff.map(x=>x.id===id?{...x,pin}:x); 
+    setStaff(s); fbWrite('staff',s); setEditPins(p=>({...p,[id]:''})); 
+  };
 
   const updateSettings=updates=>{ const s={...settings,...updates}; setSettings(s); fbWrite('settings',s); };
   const toggleUnavail=(key,n)=>{ const c=settings[key]||[]; updateSettings({[key]:c.includes(n)?c.filter(x=>x!==n):[...c,n]}); };
@@ -276,14 +316,15 @@ export default function App() {
   const saveGroup=()=>{ if(!editGroup?.label.trim())return; updateSettings({rtGroups:(settings.rtGroups||[]).map(g=>g.id===editingGroupId?{...editGroup}:g)}); setEditingGroupId(null); setEditGroup(null); };
   const deleteGroup=id=>updateSettings({rtGroups:(settings.rtGroups||[]).filter(g=>g.id!==id)});
 
-  const handleCSVUpload=file=>{ Papa.parse(file,{ header:true,skipEmptyLines:true, complete:results=>{ const rows=results.data.filter(r=>r['Region/Depot']?.trim()===REGION_LABEL); const schedule={}; rows.forEach(row=>{ const stmsName=extractStmsName(row['STMS+Truck']||''); if(!stmsName)return; const tcs=[...extractTcNames(row["TC's"]||''),...extractTcNames(row['Drivers+Trucks']||'')]; if(!schedule[stmsName])schedule[stmsName]={tcs:[]}; tcs.forEach(tc=>{if(!schedule[stmsName].tcs.includes(tc))schedule[stmsName].tcs.push(tc);}); }); const parsed={}; Object.entries(schedule).forEach(([n,d])=>{ parsed[n]={...d,staffId:savedMappings[n]||null}; }); setCsvParsed(parsed); } }); };
+  const handleCSVUpload=file=>{ Papa.parse(file,{ header:true,skipEmptyLines:true, complete:results=>{ const rows=results.data.filter(r=>r['STMS+Truck']||r["TC's"]||r['Drivers+Trucks']); const schedule={}; rows.forEach(row=>{ const stmsName=extractStmsName(row['STMS+Truck']||''); if(!stmsName)return; const tcs=[...extractTcNames(row["TC's"]||''),...extractTcNames(row['Drivers+Trucks']||'')]; if(!schedule[stmsName])schedule[stmsName]={tcs:[]}; tcs.forEach(tc=>{if(!schedule[stmsName].tcs.includes(tc))schedule[stmsName].tcs.push(tc);}); }); const parsed={}; Object.entries(schedule).forEach(([n,d])=>{ parsed[n]={...d,staffId:savedMappings[n]||null}; }); setCsvParsed(parsed); } }); };
   const saveSchedule=async()=>{ setCsvSaving(true); const nm={...savedMappings},sc={}; Object.entries(csvParsed).forEach(([n,d])=>{ if(d.staffId){nm[n]=d.staffId;sc[d.staffId]=d.tcs;} }); await Promise.all([fbWrite('name_mappings',nm),fbWrite(`schedule/${todayKey()}`,sc)]); setSavedMappings(nm); setCsvParsed(null); setCsvSaving(false); setCsvSaved(true); setTimeout(()=>setCsvSaved(false),3000); };
 
-  const filtered=staff.filter(s=>s.name.toLowerCase().includes(pickerSearch.toLowerCase()));
+  const visibleStaff = filterVisibleRegion(staff);
+  const filtered=visibleStaff.filter(s=>s.name.toLowerCase().includes(pickerSearch.toLowerCase()));
   const stmsFiltered=filtered.filter(s=>s.role==="STMS").sort((a,b)=>a.name.localeCompare(b.name));
   const tcFiltered=filtered.filter(s=>s.role==="TC").sort((a,b)=>a.name.localeCompare(b.name));
-  const stmsAll=staff.filter(s=>s.role==="STMS").sort((a,b)=>a.name.localeCompare(b.name));
-  const tcAll=staff.filter(s=>s.role==="TC").sort((a,b)=>a.name.localeCompare(b.name));
+  const stmsAll=visibleStaff.filter(s=>s.role==="STMS").sort((a,b)=>a.name.localeCompare(b.name));
+  const tcAll=visibleStaff.filter(s=>s.role==="TC").sort((a,b)=>a.name.localeCompare(b.name));
   const sortedLog=[...log].sort((a,b)=>new Date(b.timeOut)-new Date(a.timeOut));
   const re=log.find(e=>e.id===returnId);
   const totalSel=cf.rts.length+cf.wands.length+cf.lights.length;
@@ -685,9 +726,9 @@ export default function App() {
                 <div className="bg-white rounded-2xl shadow-sm p-4">
                   <h3 className="text-sm font-bold text-slate-700 mb-1">Staff PINs</h3>
                   <p className="text-xs text-slate-400 mb-3">4-digit PINs are required to log into the Site Tracker app. Set a PIN for each staff member who needs access.</p>
-                  {staff.length===0?<p className="text-xs text-slate-400 text-center py-3">No staff added yet.</p>:(
+                  {visibleStaff.length===0?<p className="text-xs text-slate-400 text-center py-3">No staff added yet.</p>:(
                     <div className="flex flex-col">
-                      {[...staff].sort((a,b)=>a.name.localeCompare(b.name)).map((s,i,arr)=>(
+                      {[...visibleStaff].sort((a,b)=>a.name.localeCompare(b.name)).map((s,i,arr)=>(
                         <div key={s.id} className={`flex items-center justify-between py-2.5 ${i<arr.length-1?"border-b border-slate-100":""}`}>
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="font-medium text-sm text-slate-800 truncate">{s.name}</span>
@@ -695,12 +736,16 @@ export default function App() {
                             {s.pin?<span className="text-xs text-green-600 shrink-0">●</span>:<span className="text-xs text-amber-500 shrink-0">○</span>}
                           </div>
                           <div className="flex items-center gap-2 shrink-0 ml-2">
-                            <input type="text" inputMode="numeric" maxLength={4}
+                            <input type={showPins[s.id] ? 'text' : 'password'} inputMode="numeric" maxLength={4}
                               placeholder={s.pin?"Change":"Set PIN"}
-                              value={editPins[s.id]||''}
+                              value={editPins[s.id] ?? s.pin ?? ''}
                               onChange={e=>setEditPins(p=>({...p,[s.id]:e.target.value.replace(/\D/g,'')}))}
                               className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-16 text-center focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-                            <button onClick={()=>savePin(s.id)} disabled={!editPins[s.id]||editPins[s.id].length!==4}
+                            <button type="button" onClick={()=>setShowPins(p=>({...p,[s.id]:!p[s.id]}))}
+                              className="text-[10px] bg-slate-100 text-slate-600 font-medium px-2 py-1 rounded-lg hover:bg-slate-200 transition">
+                              {showPins[s.id] ? 'Hide' : 'View'}
+                            </button>
+                            <button onClick={()=>savePin(s.id)} disabled={!editPins[s.id] && !s.pin}
                               className="text-xs bg-blue-100 text-blue-700 font-semibold px-2.5 py-1.5 rounded-lg hover:bg-blue-200 disabled:opacity-40 disabled:cursor-not-allowed transition">
                               Save
                             </button>
