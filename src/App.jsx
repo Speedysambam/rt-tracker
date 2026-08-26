@@ -35,23 +35,27 @@ const GC = Object.fromEntries(GROUP_COLORS.map(c=>[c.id,c]));
 const toArr      = v => !v?[]:Array.isArray(v)?v.filter(Boolean):Object.values(v).filter(Boolean);
 const mergeRegionData = (root, key) => {
   if(!root || typeof root !== 'object') return [];
-  const merged = [];
-  if(root[key]) merged.push(...toArr(root[key]).map(item => ({...item, __region: ''})));
+  const map = new Map();
+  // Add region-specific entries first so they take precedence over root-level entries
   Object.entries(root).forEach(([region, regionData]) => {
-    if(!region || typeof regionData !== 'object' || Array.isArray(regionData) || !regionData[key]) return;
-    merged.push(...toArr(regionData[key]).map(item => ({...item, __region: region})));
+    if(!region || !regionData) return;
+    const items = regionData[key] ? toArr(regionData[key]) : [];
+    items.forEach(item => {
+      const id = item.id || item.name || JSON.stringify(item);
+      map.set(id, {...item, __region: region});
+    });
   });
-  const seen = new Set();
-  return merged.filter(item => {
+  // Then add root-level entries if they don't already exist
+  if(root[key]) toArr(root[key]).forEach(item => {
     const id = item.id || item.name || JSON.stringify(item);
-    if(seen.has(id)) return false;
-    seen.add(id);
-    return true;
+    if(!map.has(id)) map.set(id, {...item, __region: ''});
   });
+  return Array.from(map.values());
 };
 const filterVisibleRegion = list => {
   if(!REGION) return list;
-  return list.filter(item => !item.__region || item.__region.toLowerCase() === REGION);
+  // When running for a specific region, only show items that are stored under that region.
+  return list.filter(item => item.__region && String(item.__region).toLowerCase() === REGION);
 };
 const logObj     = arr => Object.fromEntries(arr.map(e=>[e.id,e]));
 const pad        = n => String(n).padStart(2,"0");
@@ -203,16 +207,26 @@ export default function App() {
   useEffect(()=>{
     const check=()=>{ if(loadedRef.current.log&&loadedRef.current.staff&&loadedRef.current.settings)setLoading(false); };
     const unsubLog=onValue(ref(db),snap=>{
-      setLog(mergeRegionData(snap.val(),'log').filter(e=>e?.name));
+      const root = snap.val();
+      console.debug('Firebase root snapshot (App) keys:', root && typeof root==='object' ? Object.keys(root) : root);
+      const mergedLog = mergeRegionData(root,'log');
+      console.debug('Merged log count:', mergedLog.length);
+      const visibleLog = filterVisibleRegion(mergedLog);
+      console.debug('Filtered log count (by region):', visibleLog.length);
+      setLog(visibleLog.filter(e=>e?.name));
       loadedRef.current.log=true; check();
     });
     const unsubStaff=onValue(ref(db),snap=>{
-      setStaff(mergeRegionData(snap.val(),'staff'));
+      const root = snap.val();
+      const mergedStaff = mergeRegionData(root,'staff');
+      console.debug('Merged staff count (App):', mergedStaff.length, mergedStaff.slice(0,10));
+      setStaff(mergedStaff);
       loadedRef.current.staff=true; check();
     });
     const unsubSettings=onValue(ref(db),snap=>{
       const root=snap.val()||{};
-      const d = root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
+      const regionSettings = REGION && root[REGION] && root[REGION].settings ? root[REGION].settings : null;
+      const d = regionSettings || root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
       setSettings({
         rtCount:d.rtCount??30,wandCount:d.wandCount??10,lightCount:d.lightCount??5,
         unavailableRts:toArr(d.unavailableRts),unavailableWands:toArr(d.unavailableWands),

@@ -25,23 +25,27 @@ const todayKey     = () => new Date().toISOString().split('T')[0];
 const sortNums     = arr => [...arr].sort((a,b)=>a-b);
 const filterVisibleRegion = list => {
   if(!REGION) return list;
-  return list.filter(item => !item.__region || item.__region.toLowerCase() === REGION);
+  // When running for a specific region, only show items that are stored under that region.
+  return list.filter(item => item.__region && String(item.__region).toLowerCase() === REGION);
 };
 const mergeRegionData = (root, key) => {
   if(!root || typeof root !== 'object') return [];
-  const merged = [];
-  if(root[key]) merged.push(...toArr(root[key]).map(item => ({...item, __region: ''})));
+  const map = new Map();
+  // Add region-specific entries first so they take precedence over root-level entries
   Object.entries(root).forEach(([region, regionData]) => {
-    if(!region || typeof regionData !== 'object' || Array.isArray(regionData) || !regionData[key]) return;
-    merged.push(...toArr(regionData[key]).map(item => ({...item, __region: region})));
+    if(!region || !regionData) return;
+    const items = regionData[key] ? toArr(regionData[key]) : [];
+    items.forEach(item => {
+      const id = item.id || item.name || JSON.stringify(item);
+      map.set(id, {...item, __region: region});
+    });
   });
-  const seen = new Set();
-  return merged.filter(item => {
+  // Then add root-level entries if they don't already exist
+  if(root[key]) toArr(root[key]).forEach(item => {
     const id = item.id || item.name || JSON.stringify(item);
-    if(seen.has(id)) return false;
-    seen.add(id);
-    return true;
+    if(!map.has(id)) map.set(id, {...item, __region: ''});
   });
+  return Array.from(map.values());
 };
 
 const GROUP_COLORS = [
@@ -101,7 +105,12 @@ export default function StmsApp() {
   // Load STMS list for login
   useEffect(()=>{
     const unsub=onValue(ref(db),snap=>{
-      const all=filterVisibleRegion(mergeRegionData(snap.val(), 'staff')).filter(s=>s.role==='STMS');
+      const root = snap.val();
+      console.debug('Firebase root snapshot (StmsApp):', root && typeof root==='object' ? Object.keys(root) : root);
+      const mergedAll = mergeRegionData(root, 'staff');
+      console.debug('Merged staff (pre-filter) count:', mergedAll.length, mergedAll.slice(0,10));
+      const all=filterVisibleRegion(mergedAll).filter(s=>s.role==='STMS');
+      console.debug('STMS visible list count:', all.length, all.map(s=>s.name).slice(0,20));
       setStmsList(all.sort((a,b)=>a.name.localeCompare(b.name)));
       setPhase('pin');
     });
@@ -117,7 +126,8 @@ export default function StmsApp() {
     });
     const unsubSettings=onValue(ref(db),snap=>{
       const root=snap.val()||{};
-      const settingsEntry = root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
+      const regionSettings = REGION && root[REGION] && root[REGION].settings ? root[REGION].settings : null;
+      const settingsEntry = regionSettings || root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
       setRtGroups(toArr(settingsEntry.rtGroups).map(g=>({...g,rts:toArr(g.rts)})));
     });
     const unsubConn=onValue(ref(db,'.info/connected'),snap=>setConnected(snap.val()===true));
