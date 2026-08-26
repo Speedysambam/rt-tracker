@@ -23,14 +23,8 @@ const fmtTime      = iso => iso?new Date(iso).toLocaleTimeString("en-NZ",{hour:"
 const fmtDate      = iso => iso?new Date(iso).toLocaleDateString("en-NZ",{day:"2-digit",month:"short",year:"numeric"}):"—";
 const todayKey     = () => new Date().toISOString().split('T')[0];
 const sortNums     = arr => [...arr].sort((a,b)=>a-b);
-const filterVisibleRegion = list => {
-  if(!REGION) return list;
-  const regionKey = REGION.trim().toLowerCase();
-  return list.filter(item => {
-    const itemRegion = String(item?.__region ?? '').trim().toLowerCase();
-    return itemRegion === regionKey;
-  });
-};
+const filterVisibleRegion = list => list; // STMS app is region-agnostic: it can log in from any region and then sync to the selected STMS's own region.
+
 const mergeRegionData = (root, key) => {
   if(!root || typeof root !== 'object') return [];
   const map = new Map();
@@ -125,11 +119,14 @@ export default function StmsApp() {
     if(phase!=='board'||!selectedStms) return;
 
     const unsubLog=onValue(ref(db),snap=>{
-      setLog(filterVisibleRegion(mergeRegionData(snap.val(), 'log')).filter(e=>e?.name));
+      const root = snap.val() || {};
+      const allLog = mergeRegionData(root, 'log');
+      setLog(allLog.filter(e=>e?.name));
     });
     const unsubSettings=onValue(ref(db),snap=>{
       const root=snap.val()||{};
-      const regionSettings = REGION && root[REGION] && root[REGION].settings ? root[REGION].settings : null;
+      const regionName = selectedStms?.__region || REGION;
+      const regionSettings = regionName && root[regionName] && root[regionName].settings ? root[regionName].settings : null;
       const settingsEntry = regionSettings || root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
       setRtGroups(toArr(settingsEntry.rtGroups).map(g=>({...g,rts:toArr(g.rts)})));
     });
@@ -138,6 +135,7 @@ export default function StmsApp() {
     const schedulePaths = [
       `schedule/${todayKey()}/${selectedStms.id}`,
       ...(selectedStms.__region ? [`${selectedStms.__region}/schedule/${todayKey()}/${selectedStms.id}`] : []),
+      ...(selectedStms.__region ? [`${selectedStms.__region}/schedule/${todayKey()}`] : []),
     ];
     Promise.all(schedulePaths.map(path => get(ref(db, path)).then(snap => snap.exists() ? snap.val() : null))).then(results => {
       const payload = results.find(Boolean);
