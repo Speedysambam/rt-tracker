@@ -55,8 +55,11 @@ const mergeRegionData = (root, key) => {
 };
 const filterVisibleRegion = list => {
   if(!REGION) return list;
-  // When running for a specific region, only show items that are stored under that region.
-  return list.filter(item => item.__region && String(item.__region).toLowerCase() === REGION);
+  const regionKey = REGION.trim().toLowerCase();
+  return list.filter(item => {
+    const itemRegion = String(item?.__region ?? '').trim().toLowerCase();
+    return itemRegion === regionKey;
+  });
 };
 const logObj     = arr => Object.fromEntries(arr.map(e=>[e.id,e]));
 const pad        = n => String(n).padStart(2,"0");
@@ -220,8 +223,10 @@ export default function App() {
     const unsubStaff=onValue(ref(db),snap=>{
       const root = snap.val();
       const mergedStaff = mergeRegionData(root,'staff');
+      const visibleStaff = filterVisibleRegion(mergedStaff);
       console.debug('Merged staff count (App):', mergedStaff.length, mergedStaff.slice(0,10));
-      setStaff(mergedStaff);
+      console.debug('Filtered staff count (App):', visibleStaff.length);
+      setStaff(visibleStaff);
       loadedRef.current.staff=true; check();
     });
     const unsubSettings=onValue(ref(db),snap=>{

@@ -25,8 +25,11 @@ const todayKey     = () => new Date().toISOString().split('T')[0];
 const sortNums     = arr => [...arr].sort((a,b)=>a-b);
 const filterVisibleRegion = list => {
   if(!REGION) return list;
-  // When running for a specific region, only show items that are stored under that region.
-  return list.filter(item => item.__region && String(item.__region).toLowerCase() === REGION);
+  const regionKey = REGION.trim().toLowerCase();
+  return list.filter(item => {
+    const itemRegion = String(item?.__region ?? '').trim().toLowerCase();
+    return itemRegion === regionKey;
+  });
 };
 const mergeRegionData = (root, key) => {
   if(!root || typeof root !== 'object') return [];
