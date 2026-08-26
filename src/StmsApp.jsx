@@ -3,13 +3,13 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set, get } from 'firebase/database';
 
 const _cfg = {
-  apiKey: "AIzaSyA5ISTFIZTFQnNvox8YNfsMpaiLOL1aTgU",
-  authDomain: "rt-checkout-tracker.firebaseapp.com",
-  databaseURL: "https://rt-checkout-tracker-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "rt-checkout-tracker",
-  storageBucket: "rt-checkout-tracker.firebasestorage.app",
-  messagingSenderId: "64761952473",
-  appId: "1:64761952473:web:23797528d1fb376f0326c8"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-firebase-api-key',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'demo-project.firebaseapp.com',
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL || 'https://demo-project-default-rtdb.firebaseio.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'demo-project',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'demo-project.appspot.com',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '000000000000',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:000000000000:web:demo-app-id'
 };
 const fbApp  = getApps().length ? getApp() : initializeApp(_cfg);
 const db     = getDatabase(fbApp);
