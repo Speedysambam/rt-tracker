@@ -90,6 +90,7 @@ export default function StmsApp() {
   const [selectedStms,setSelectedStms] = useState(null);
   const [pinValue,setPinValue]     = useState('');
   const [pinError,setPinError]     = useState('');
+  const [loadError,setLoadError]   = useState('');
 
   const [log,setLog]               = useState([]);
   const [todayTcs,setTodayTcs]     = useState([]);
@@ -104,17 +105,37 @@ export default function StmsApp() {
 
   // Load STMS list for login
   useEffect(()=>{
+    const loadTimeout=setTimeout(()=>{
+      if(phaseRef.current==='loading'){
+        setLoadError('The database is taking too long to respond. Check the connection and try again.');
+        setPhase('pin');
+      }
+    },12000);
     const unsub=onValue(ref(db),snap=>{
-      const root = snap.val();
-      console.debug('Firebase root snapshot (StmsApp):', root && typeof root==='object' ? Object.keys(root) : root);
-      const mergedAll = mergeRegionData(root, 'staff');
-      console.debug('Merged staff (pre-filter) count:', mergedAll.length, mergedAll.slice(0,10));
-      const all=filterVisibleRegion(mergedAll).filter(s=>s.role==='STMS');
-      console.debug('STMS visible list count:', all.length, all.map(s=>s.name).slice(0,20));
-      setStmsList(all.sort((a,b)=>a.name.localeCompare(b.name)));
-      if(phaseRef.current === 'loading') setPhase('pin');
+      try {
+        clearTimeout(loadTimeout);
+        const root = snap.val();
+        console.debug('Firebase root snapshot (StmsApp):', root && typeof root==='object' ? Object.keys(root) : root);
+        const mergedAll = mergeRegionData(root, 'staff');
+        console.debug('Merged staff (pre-filter) count:', mergedAll.length, mergedAll.slice(0,10));
+        const all=filterVisibleRegion(mergedAll).filter(s=>s?.role==='STMS'&&s?.name);
+        console.debug('STMS visible list count:', all.length, all.map(s=>s.name).slice(0,20));
+        setStmsList(all.sort((a,b)=>String(a.name).localeCompare(String(b.name))));
+        setLoadError('');
+        if(phaseRef.current === 'loading') setPhase('pin');
+      } catch(error) {
+        clearTimeout(loadTimeout);
+        console.error('Failed to load STMS list:',error);
+        setLoadError('Unable to load STMS data. Check the Firebase connection and try again.');
+        setPhase('pin');
+      }
+    },error=>{
+      clearTimeout(loadTimeout);
+      console.error('Failed to connect to Firebase for STMS login:',error);
+      setLoadError('Unable to connect to the database. Check the internet connection and try again.');
+      setPhase('pin');
     });
-    return()=>unsub();
+    return()=>{ clearTimeout(loadTimeout); unsub(); };
   },[]);
 
   useEffect(()=>{
@@ -215,6 +236,7 @@ export default function StmsApp() {
         <div className="text-blue-300 text-sm">{REGION_LABEL}</div>
       </div>
       <div className="px-4 py-10 max-w-sm mx-auto">
+        {loadError&&<p className="text-sm text-red-500 text-center mb-6 bg-red-50 rounded-xl px-3 py-2">{loadError}</p>}
         {stmsList.length===0?(
           <div className="text-center text-slate-400 text-sm py-12">No STMSs found. Ask your manager to add staff members.</div>
         ):(
