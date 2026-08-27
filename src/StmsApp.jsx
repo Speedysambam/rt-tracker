@@ -117,6 +117,14 @@ export default function StmsApp() {
     return()=>unsub();
   },[]);
 
+  useEffect(()=>{
+    if(phase!=='board'||!selectedStms) return;
+    get(ref(db,`stmsRecentCrew/${selectedStms.id}`)).then(snap=>{
+      const savedCrew = toArr(snap.val()).filter(name=>typeof name==='string'&&name.trim());
+      setRecentCrew(savedCrew.slice(0,10));
+    }).catch(()=>setRecentCrew([]));
+  },[phase,selectedStms]);
+
   // Load board data after login
   useEffect(()=>{
     if(phase!=='board'||!selectedStms) return;
@@ -173,6 +181,12 @@ export default function StmsApp() {
     const regionPath = selectedStms?.__region || REGION;
     const path = regionPath ? `${regionPath}/log/${logId}/tcAssignments/${gearType}_${num}` : `log/${logId}/tcAssignments/${gearType}_${num}`;
     set(ref(db, path), tcName || null).catch(console.error);
+    if(tcName?.trim()){
+      const name=tcName.trim();
+      const updated=[name,...recentCrew.filter(saved=>saved.toLowerCase()!==name.toLowerCase())].slice(0,10);
+      setRecentCrew(updated);
+      set(ref(db,`stmsRecentCrew/${selectedStms.id}`),updated).catch(console.error);
+    }
     setAssignTarget(null); setTcFilter('');
   };
 
@@ -180,8 +194,10 @@ export default function StmsApp() {
 
   const myCheckouts=log.filter(e=>e.name===selectedStms?.name&&!e.returnedAt);
   const filteredTcs=tcFilter?todayTcs.filter(tc=>tc.toLowerCase().includes(tcFilter.toLowerCase())):todayTcs;
+  const filteredRecent=tcFilter?recentCrew.filter(name=>name.toLowerCase().includes(tcFilter.toLowerCase())):recentCrew;
+  const displayedRecent=filteredRecent.filter(name=>!todayTcs.some(tc=>tc.toLowerCase()===name.toLowerCase()));
 
-  const logout=()=>{ setPhase('pin'); setSelectedStms(null); setLog([]); setTodayTcs([]); setPinValue(''); setPinError(''); };
+  const logout=()=>{ setPhase('pin'); setSelectedStms(null); setLog([]); setTodayTcs([]); setRecentCrew([]); setPinValue(''); setPinError(''); };
 
   // ── LOADING ──────────────────────────────────────────────────────────────────
   if(phase==='loading') return (
@@ -391,6 +407,21 @@ export default function StmsApp() {
                     ))}
                   </div>
                 </>
+              )}
+
+              {displayedRecent.length>0&&(
+                <div className={filteredTcs.length>0?'mt-5':''}>
+                  <p className="text-xs text-slate-400 mb-2 font-semibold uppercase tracking-wide">Recent workers</p>
+                  <div className="flex flex-col gap-1.5">
+                    {displayedRecent.map(name=>(
+                      <button key={name} onClick={()=>assignTc(assignTarget.logId,assignTarget.gearType,assignTarget.num,name)}
+                        className={`w-full text-left px-4 py-3.5 rounded-xl font-medium text-sm transition-all active:scale-95
+                          ${assignTarget.current===name?'bg-blue-600 text-white shadow-sm':'bg-slate-50 text-slate-800 hover:bg-blue-50 hover:text-blue-700'}`}>
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {/* Manual entry if typed name not in list */}
