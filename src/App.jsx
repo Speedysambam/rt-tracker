@@ -24,7 +24,7 @@ const fbGet        = path => get(ref(db,rp(path))).then(s=>s.exists()?s.val():nu
 const PAGES = { DASHBOARD:"dashboard",CHECKOUT:"checkout",RETURN:"return",LOG:"log",STAFF:"staff",PICKER:"picker",SETTINGS:"settings" };
 const ROLES = ["STMS","TC"];
 const SETTINGS_PW = "AllianceHam";
-const DEF_SETTINGS = { rtCount:30,wandCount:10,lightCount:5,unavailableRts:[],unavailableWands:[],unavailableLights:[],emailList:[],rtGroups:[] };
+const DEF_SETTINGS = { rtCount:30,wandCount:10,lightCount:5,harnessCount:8,unavailableRts:[],unavailableWands:[],unavailableLights:[],unavailableHarnesses:[],emailList:[],rtGroups:[] };
 
 const GROUP_COLORS = [
   {id:"purple", light:"#f3e8ff",dark:"#9333ea"},{id:"indigo", light:"#e0e7ff",dark:"#4f46e5"},
@@ -100,7 +100,7 @@ function SignaturePad({ sigRef }) {
 }
 
 function SelectGrid({ count, outSet, unavailSet=new Set(), selected, onToggle, color="blue", groups=[] }) {
-  const C={blue:{sel:"bg-blue-600 text-white",av:"bg-slate-100 text-slate-600 hover:bg-blue-100"},yellow:{sel:"bg-yellow-500 text-white",av:"bg-slate-100 text-slate-600 hover:bg-yellow-100"},orange:{sel:"bg-orange-500 text-white",av:"bg-slate-100 text-slate-600 hover:bg-orange-100"}};
+  const C={blue:{sel:"bg-blue-600 text-white",av:"bg-slate-100 text-slate-600 hover:bg-blue-100"},yellow:{sel:"bg-yellow-500 text-white",av:"bg-slate-100 text-slate-600 hover:bg-yellow-100"},orange:{sel:"bg-orange-500 text-white",av:"bg-slate-100 text-slate-600 hover:bg-orange-100"},indigo:{sel:"bg-indigo-600 text-white",av:"bg-slate-100 text-slate-600 hover:bg-indigo-100"}};
   return (
     <div className="grid gap-1" style={{gridTemplateColumns:`repeat(${Math.min(count,10)},minmax(0,1fr))`}}>
       {Array.from({length:count},(_,i)=>i+1).map(n=>{
@@ -176,11 +176,12 @@ export default function App() {
   const sigRef    = useRef(null);
   const loadedRef = useRef({log:false,staff:false,settings:false});
 
-  const [cf,setCf]                 = useState({name:"",timeOut:localISO(),rts:[],wands:[],lights:[],channel:null});
+  const [cf,setCf]                 = useState({name:"",timeOut:localISO(),rts:[],wands:[],lights:[],harnesses:[],channel:null});
   const [cfErr,setCfErr]           = useState("");
   const [showWands,setShowWands]   = useState(false);
   const [showLights,setShowLights] = useState(false);
-  const [rf,setRf]                 = useState({timeIn:localISO(),retRts:[],retWands:[],retLights:[],comments:""});
+  const [showHarnesses,setShowHarnesses] = useState(false);
+  const [rf,setRf]                 = useState({timeIn:localISO(),retRts:[],retWands:[],retLights:[],retHarnesses:[],comments:""});
   const [rfErr,setRfErr]           = useState("");
   const [pickerSearch,setPickerSearch] = useState("");
   const [newStaff,setNewStaff]     = useState({name:"",role:"STMS"});
@@ -234,9 +235,9 @@ export default function App() {
       const regionSettings = REGION && root[REGION] && root[REGION].settings ? root[REGION].settings : null;
       const d = regionSettings || root.settings || Object.values(root).find(v=>v && typeof v==='object' && v.settings)?.settings || {};
       setSettings({
-        rtCount:d.rtCount??30,wandCount:d.wandCount??10,lightCount:d.lightCount??5,
+        rtCount:d.rtCount??30,wandCount:d.wandCount??10,lightCount:d.lightCount??5,harnessCount:d.harnessCount??8,
         unavailableRts:toArr(d.unavailableRts),unavailableWands:toArr(d.unavailableWands),
-        unavailableLights:toArr(d.unavailableLights),emailList:toArr(d.emailList),
+        unavailableLights:toArr(d.unavailableLights),unavailableHarnesses:toArr(d.unavailableHarnesses),emailList:toArr(d.emailList),
         rtGroups:toArr(d.rtGroups).map(g=>({...g,rts:toArr(g.rts)})),
       });
       loadedRef.current.settings=true; check();
@@ -248,24 +249,26 @@ export default function App() {
 
   // ── Derived gear ────────────────────────────────────────────────────────────
   const active=log.filter(e=>!e.returnedAt);
-  const outRts=new Set(),outWands=new Set(),outLights=new Set(),owners={};
+  const outRts=new Set(),outWands=new Set(),outLights=new Set(),outHarnesses=new Set(),owners={};
   active.forEach(e=>{
     (e.rts||[]).forEach(n=>{outRts.add(n);owners[`rt-${n}`]=e.name;});
     (e.wands||[]).forEach(n=>{outWands.add(n);owners[`wand-${n}`]=e.name;});
     (e.lights||[]).forEach(n=>{outLights.add(n);owners[`light-${n}`]=e.name;});
+    (e.harnesses||[]).forEach(n=>{outHarnesses.add(n);owners[`harness-${n}`]=e.name;});
   });
   const unavailRts=new Set(settings.unavailableRts);
   const unavailWands=new Set(settings.unavailableWands);
   const unavailLights=new Set(settings.unavailableLights);
+  const unavailHarnesses=new Set(settings.unavailableHarnesses);
   const avail=(total,out,unavail)=>total-out.size-[...unavail].filter(n=>!out.has(n)).length;
 
   // ── Navigation ──────────────────────────────────────────────────────────────
   const goTo=p=>{setTooltip(null);setPage(p);};
-  const goCheckout=()=>{ setCf({name:"",timeOut:localISO(),rts:[],wands:[],lights:[],channel:null}); setCfErr(""); setShowWands(false); setShowLights(false); goTo(PAGES.CHECKOUT); };
+  const goCheckout=()=>{ setCf({name:"",timeOut:localISO(),rts:[],wands:[],lights:[],harnesses:[],channel:null}); setCfErr(""); setShowWands(false); setShowLights(false); setShowHarnesses(false); goTo(PAGES.CHECKOUT); };
   const goReturn=id=>{
     const e=log.find(x=>x.id===id);
     setReturnId(id);
-    setRf({timeIn:localISO(),retRts:[...(e?.rts||[])],retWands:[...(e?.wands||[])],retLights:[...(e?.lights||[])],comments:""});
+    setRf({timeIn:localISO(),retRts:[...(e?.rts||[])],retWands:[...(e?.wands||[])],retLights:[...(e?.lights||[])],retHarnesses:[...(e?.harnesses||[])],comments:""});
     setRfErr(""); goTo(PAGES.RETURN);
   };
   const toggleCf=(key,n)=>setCf(p=>({...p,[key]:p[key].includes(n)?p[key].filter(x=>x!==n):[...p[key],n]}));
@@ -274,32 +277,35 @@ export default function App() {
   // ── Actions ─────────────────────────────────────────────────────────────────
   const submitCheckout=()=>{
     if(!cf.name.trim())return setCfErr("Please enter a name.");
-    if(cf.rts.length+cf.wands.length+cf.lights.length===0)return setCfErr("Please select at least one piece of gear.");
+    if(cf.rts.length+cf.wands.length+cf.lights.length+cf.harnesses.length===0)return setCfErr("Please select at least one piece of gear.");
     const sig=sigRef.current?.get(); if(!sig)return setCfErr("Please provide a signature.");
     const entry={id:Date.now().toString(),name:cf.name.trim(),timeOut:new Date(cf.timeOut).toISOString(),
-      rts:cf.rts,wands:cf.wands,lights:cf.lights,channel:cf.channel||null,signature:sig,
-      returnedAt:null,retRts:null,retWands:null,retLights:null,comments:"",tcAssignments:{}};
+      rts:cf.rts,wands:cf.wands,lights:cf.lights,harnesses:cf.harnesses,channel:cf.channel||null,signature:sig,
+      returnedAt:null,retRts:null,retWands:null,retLights:null,retHarnesses:null,comments:"",tcAssignments:{}};
     const nl=[entry,...log]; setLog(nl); fbWrite('log',logObj(nl));
     setCfErr(""); goTo(PAGES.DASHBOARD);
   };
 
   const submitReturn=()=>{
     const entry=log.find(e=>e.id===returnId);
-    const updated={...entry,returnedAt:new Date(rf.timeIn).toISOString(),retRts:rf.retRts,retWands:rf.retWands,retLights:rf.retLights,comments:rf.comments};
+    const updated={...entry,returnedAt:new Date(rf.timeIn).toISOString(),retRts:rf.retRts,retWands:rf.retWands,retLights:rf.retLights,retHarnesses:rf.retHarnesses,comments:rf.comments};
     const nl=log.map(e=>e.id===returnId?updated:e); setLog(nl); fbWrite('log',logObj(nl));
     const mRts=(entry.rts||[]).filter(n=>!rf.retRts.includes(n));
     const mWands=(entry.wands||[]).filter(n=>!rf.retWands.includes(n));
     const mLights=(entry.lights||[]).filter(n=>!rf.retLights.includes(n));
-    const anyMissing=mRts.length+mWands.length+mLights.length>0;
+    const mHarnesses=(entry.harnesses||[]).filter(n=>!rf.retHarnesses.includes(n));
+    const anyMissing=mRts.length+mWands.length+mLights.length+mHarnesses.length>0;
     if((rf.comments.trim()||anyMissing)&&settings.emailList.length>0){
       const gear=[];
       if((entry.rts||[]).length)    gear.push(`📻 RTs: ${sortNums(entry.rts).map(n=>`#${n}`).join(', ')}`);
       if((entry.wands||[]).length)  gear.push(`🟡 Wands: ${sortNums(entry.wands).map(n=>`#${n}`).join(', ')}`);
       if((entry.lights||[]).length) gear.push(`💡 Lights: ${sortNums(entry.lights).map(n=>`#${n}`).join(', ')}`);
+      if((entry.harnesses||[]).length) gear.push(`🧰 Harnesses: ${sortNums(entry.harnesses).map(n=>`#${n}`).join(', ')}`);
       const missing=[];
       if(mRts.length)    missing.push(`📻 RTs: ${sortNums(mRts).map(n=>`#${n}`).join(', ')}`);
       if(mWands.length)  missing.push(`🟡 Wands: ${sortNums(mWands).map(n=>`#${n}`).join(', ')}`);
       if(mLights.length) missing.push(`💡 Lights: ${sortNums(mLights).map(n=>`#${n}`).join(', ')}`);
+      if(mHarnesses.length) missing.push(`🧰 Harnesses: ${sortNums(mHarnesses).map(n=>`#${n}`).join(', ')}`);
       sendNotification({recipients:settings.emailList,staffName:entry.name,
         timeOut:fmtTime(entry.timeOut),timeIn:fmtTime(new Date(rf.timeIn).toISOString()),
         date:fmtDate(entry.timeOut),gearDetails:gear,missingDetails:missing,comments:rf.comments});
@@ -347,7 +353,7 @@ export default function App() {
   const tcAll=visibleStaff.filter(s=>s.role==="TC").sort((a,b)=>a.name.localeCompare(b.name));
   const sortedLog=[...log].sort((a,b)=>new Date(b.timeOut)-new Date(a.timeOut));
   const re=log.find(e=>e.id===returnId);
-  const totalSel=cf.rts.length+cf.wands.length+cf.lights.length;
+  const totalSel=cf.rts.length+cf.wands.length+cf.lights.length+cf.harnesses.length;
   const showBack=page!==PAGES.DASHBOARD;
 
   if(loading)return(
@@ -399,6 +405,7 @@ export default function App() {
                           {(e.rts||[]).length>0&&` · RTs: ${sortNums(e.rts).join(", ")}`}
                           {(e.wands||[]).length>0&&` · Wands: ${sortNums(e.wands).join(", ")}`}
                           {(e.lights||[]).length>0&&` · Lights: ${sortNums(e.lights).join(", ")}`}
+                          {(e.harnesses||[]).length>0&&` · Harnesses: ${sortNums(e.harnesses).join(", ")}`}
                         </div>
                       </div>
                       <div className="text-right shrink-0">
@@ -434,7 +441,7 @@ export default function App() {
                 </div>
                 <GroupLegend groups={settings.rtGroups}/>
               </div>
-              {[["🟡 Wands",settings.wandCount,outWands,unavailWands,"wand"],["💡 Overhead Lights",settings.lightCount,outLights,unavailLights,"light"]].map(([label,count,outSet,unavSet,type])=>(
+              {[["🟡 Wands",settings.wandCount,outWands,unavailWands,"wand"],["💡 Overhead Lights",settings.lightCount,outLights,unavailLights,"light"],["🧰 Harnesses",settings.harnessCount,outHarnesses,unavailHarnesses,"harness"]].map(([label,count,outSet,unavSet,type])=>(
                 <div key={type} className="mb-2 bg-slate-50 rounded-xl px-3 py-2.5">
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">{label} — {avail(count,outSet,unavSet)}/{count} available</div>
                   {outSet.size===0&&unavSet.size===0?<p className="text-xs text-green-600 font-medium">All available</p>:(
@@ -515,7 +522,7 @@ export default function App() {
                 <SelectGrid count={settings.rtCount} outSet={outRts} unavailSet={unavailRts} selected={cf.rts} onToggle={n=>toggleCf("rts",n)} color="blue" groups={settings.rtGroups}/>
                 <GroupLegend groups={settings.rtGroups}/>
               </div>
-              {[["🟡 Wands",settings.wandCount,outWands,unavailWands,"wands","yellow",showWands,setShowWands],["💡 Overhead Lights",settings.lightCount,outLights,unavailLights,"lights","orange",showLights,setShowLights]].map(([label,count,outSet,unavSet,key,color,show,setShow])=>(
+              {[["🟡 Wands",settings.wandCount,outWands,unavailWands,"wands","yellow",showWands,setShowWands],["💡 Overhead Lights",settings.lightCount,outLights,unavailLights,"lights","orange",showLights,setShowLights],["🧰 Harnesses",settings.harnessCount,outHarnesses,unavailHarnesses,"harnesses","indigo",showHarnesses,setShowHarnesses]].map(([label,count,outSet,unavSet,key,color,show,setShow])=>(
                 <div key={key}>
                   <button onClick={()=>setShow(v=>!v)} className="w-full flex items-center justify-between text-sm font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 rounded-xl px-3 py-2.5 transition">
                     <span>{label}{cf[key].length>0&&<span className="text-blue-600 font-normal"> — {cf[key].length} selected</span>}</span>
@@ -531,6 +538,7 @@ export default function App() {
                   {cf.rts.length>0&&<div>📻 RTs: {numList(sortNums(cf.rts))}</div>}
                   {cf.wands.length>0&&<div>🟡 Wands: {numList(sortNums(cf.wands))}</div>}
                   {cf.lights.length>0&&<div>💡 Lights: {numList(sortNums(cf.lights))}</div>}
+                  {cf.harnesses.length>0&&<div>🧰 Harnesses: {numList(sortNums(cf.harnesses))}</div>}
                 </div>
               )}
               <div>
@@ -546,11 +554,12 @@ export default function App() {
 
         {/* ══ RETURN ══ */}
         {page===PAGES.RETURN&&re&&(()=>{
-          const takenRts=re.rts||[],takenWands=re.wands||[],takenLights=re.lights||[];
+          const takenRts=re.rts||[],takenWands=re.wands||[],takenLights=re.lights||[],takenHarnesses=re.harnesses||[];
           const missingRts=takenRts.filter(n=>!rf.retRts.includes(n));
           const missingWands=takenWands.filter(n=>!rf.retWands.includes(n));
           const missingLights=takenLights.filter(n=>!rf.retLights.includes(n));
-          const totalMissing=missingRts.length+missingWands.length+missingLights.length;
+          const missingHarnesses=takenHarnesses.filter(n=>!rf.retHarnesses.includes(n));
+          const totalMissing=missingRts.length+missingWands.length+missingLights.length+missingHarnesses.length;
           return (
             <div>
               <h2 className="text-lg font-bold text-slate-800 mb-4">Return Gear</h2>
@@ -565,12 +574,14 @@ export default function App() {
                 {takenRts.length>0&&(<div><div className="flex items-center justify-between mb-2"><label className="text-sm font-semibold text-slate-600">📻 RTs</label><span className="text-xs text-slate-500">{rf.retRts.length}/{takenRts.length} returning</span></div><ReturnGrid nums={takenRts} returning={rf.retRts} onToggle={n=>toggleRf("retRts",n)}/></div>)}
                 {takenWands.length>0&&(<div><div className="flex items-center justify-between mb-2"><label className="text-sm font-semibold text-slate-600">🟡 Wands</label><span className="text-xs text-slate-500">{rf.retWands.length}/{takenWands.length} returning</span></div><ReturnGrid nums={takenWands} returning={rf.retWands} onToggle={n=>toggleRf("retWands",n)}/></div>)}
                 {takenLights.length>0&&(<div><div className="flex items-center justify-between mb-2"><label className="text-sm font-semibold text-slate-600">💡 Overhead Lights</label><span className="text-xs text-slate-500">{rf.retLights.length}/{takenLights.length} returning</span></div><ReturnGrid nums={takenLights} returning={rf.retLights} onToggle={n=>toggleRf("retLights",n)}/></div>)}
+                {takenHarnesses.length>0&&(<div><div className="flex items-center justify-between mb-2"><label className="text-sm font-semibold text-slate-600">🧰 Harnesses</label><span className="text-xs text-slate-500">{rf.retHarnesses.length}/{takenHarnesses.length} returning</span></div><ReturnGrid nums={takenHarnesses} returning={rf.retHarnesses} onToggle={n=>toggleRf("retHarnesses",n)}/></div>)}
                 {totalMissing>0&&(
                   <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-700">
                     <span className="font-bold">⚠️ Missing ({totalMissing}):</span>
                     {missingRts.length>0&&<div>📻 RTs: {numList(sortNums(missingRts))}</div>}
                     {missingWands.length>0&&<div>🟡 Wands: {numList(sortNums(missingWands))}</div>}
                     {missingLights.length>0&&<div>💡 Lights: {numList(sortNums(missingLights))}</div>}
+                    {missingHarnesses.length>0&&<div>🧰 Harnesses: {numList(sortNums(missingHarnesses))}</div>}
                   </div>
                 )}
                 <div><label className="block text-sm font-semibold text-slate-600 mb-1">Time In</label><input type="datetime-local" className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={rf.timeIn} onChange={e=>setRf(f=>({...f,timeIn:e.target.value}))}/></div>
@@ -593,10 +604,10 @@ export default function App() {
               <div className="flex flex-col gap-3">
                 {sortedLog.map(e=>{
                   const isOut=!e.returnedAt;
-                  const tRts=e.rts||[],tWands=e.wands||[],tLights=e.lights||[];
-                  const rRts=e.retRts||[],rWands=e.retWands||[],rLights=e.retLights||[];
-                  const mRts=tRts.filter(n=>!rRts.includes(n)),mWands=tWands.filter(n=>!rWands.includes(n)),mLights=tLights.filter(n=>!rLights.includes(n));
-                  const anyMissing=mRts.length+mWands.length+mLights.length>0;
+                  const tRts=e.rts||[],tWands=e.wands||[],tLights=e.lights||[],tHarnesses=e.harnesses||[];
+                  const rRts=e.retRts||[],rWands=e.retWands||[],rLights=e.retLights||[],rHarnesses=e.retHarnesses||[];
+                  const mRts=tRts.filter(n=>!rRts.includes(n)),mWands=tWands.filter(n=>!rWands.includes(n)),mLights=tLights.filter(n=>!rLights.includes(n)),mHarnesses=tHarnesses.filter(n=>!rHarnesses.includes(n));
+                  const anyMissing=mRts.length+mWands.length+mLights.length+mHarnesses.length>0;
                   const tcA=e.tcAssignments||{};
                   const hasTc=Object.entries(tcA).some(([,v])=>v);
                   return (
@@ -621,6 +632,7 @@ export default function App() {
                         {tRts.length>0&&<div>📻 {numList(sortNums(tRts))}</div>}
                         {tWands.length>0&&<div>🟡 Wands: {numList(sortNums(tWands))}</div>}
                         {tLights.length>0&&<div>💡 Lights: {numList(sortNums(tLights))}</div>}
+                        {tHarnesses.length>0&&<div>🧰 Harnesses: {numList(sortNums(tHarnesses))}</div>}
                       </div>
                       {hasTc&&(
                         <div className="mt-2 text-xs bg-indigo-50 rounded-lg px-3 py-1.5">
@@ -630,7 +642,7 @@ export default function App() {
                           </span>
                         </div>
                       )}
-                      {!isOut&&anyMissing&&<div className="mt-2 text-xs text-red-700 bg-red-50 rounded-lg px-3 py-1.5">⚠️ Missing:{mRts.length>0&&` RTs ${numList(sortNums(mRts))}`}{mWands.length>0&&` Wands ${numList(sortNums(mWands))}`}{mLights.length>0&&` Lights ${numList(sortNums(mLights))}`}</div>}
+                      {!isOut&&anyMissing&&<div className="mt-2 text-xs text-red-700 bg-red-50 rounded-lg px-3 py-1.5">⚠️ Missing:{mRts.length>0&&` RTs ${numList(sortNums(mRts))}`}{mWands.length>0&&` Wands ${numList(sortNums(mWands))}`}{mLights.length>0&&` Lights ${numList(sortNums(mLights))}`}{mHarnesses.length>0&&` Harnesses ${numList(sortNums(mHarnesses))}`}</div>}
                       {e.comments&&<div className="mt-2 text-xs text-slate-600 bg-slate-50 rounded-lg px-3 py-1.5">💬 {e.comments}</div>}
                       {e.signature&&<details className="mt-2"><summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-600">View signature</summary><img src={e.signature} alt="sig" className="h-12 mt-1 border border-slate-200 rounded bg-white"/></details>}
                     </div>
@@ -780,7 +792,7 @@ export default function App() {
                 {/* Gear Counts */}
                 <div className="bg-white rounded-2xl shadow-sm p-4">
                   <h3 className="text-sm font-bold text-slate-700 mb-3">Gear Counts</h3>
-                  {[["📻 RTs","rtCount"],["🟡 Wands","wandCount"],["💡 Overhead Lights","lightCount"]].map(([label,key])=>(
+                  {[["📻 RTs","rtCount"],["🟡 Wands","wandCount"],["💡 Overhead Lights","lightCount"],["🧰 Harnesses","harnessCount"]].map(([label,key])=>(
                     <div key={key} className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0">
                       <span className="text-sm text-slate-700">{label}</span>
                       <div className="flex items-center gap-3">
@@ -849,7 +861,7 @@ export default function App() {
                   <h3 className="text-sm font-bold text-slate-700 mb-1">Temporarily Unavailable</h3>
                   <p className="text-xs text-slate-400 mb-4">Tap to mark gear as out of service.</p>
                   <div className="flex flex-col gap-4">
-                    {[["📻 RTs",settings.rtCount,"unavailableRts"],["🟡 Wands",settings.wandCount,"unavailableWands"],["💡 Overhead Lights",settings.lightCount,"unavailableLights"]].map(([label,count,key])=>(
+                    {[["📻 RTs",settings.rtCount,"unavailableRts"],["🟡 Wands",settings.wandCount,"unavailableWands"],["💡 Overhead Lights",settings.lightCount,"unavailableLights"],["🧰 Harnesses",settings.harnessCount,"unavailableHarnesses"]].map(([label,count,key])=>(
                       <div key={key}>
                         <div className="flex items-center justify-between mb-2">
                           <p className="text-xs font-semibold text-slate-500">{label}</p>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set, get } from 'firebase/database';
 
@@ -85,6 +85,7 @@ function PinPad({ value, onChange, onComplete }) {
 // ── Main app ──────────────────────────────────────────────────────────────────
 export default function StmsApp() {
   const [phase,setPhase]           = useState('loading'); // loading|select|pin|board
+  const phaseRef = useRef('loading');
   const [stmsList,setStmsList]     = useState([]);
   const [selectedStms,setSelectedStms] = useState(null);
   const [pinValue,setPinValue]     = useState('');
@@ -99,6 +100,8 @@ export default function StmsApp() {
   const [recentCrew,setRecentCrew] = useState([]);
   const [tcFilter,setTcFilter]     = useState('');
 
+  useEffect(()=>{ phaseRef.current=phase; },[phase]);
+
   // Load STMS list for login
   useEffect(()=>{
     const unsub=onValue(ref(db),snap=>{
@@ -109,7 +112,7 @@ export default function StmsApp() {
       const all=filterVisibleRegion(mergedAll).filter(s=>s.role==='STMS');
       console.debug('STMS visible list count:', all.length, all.map(s=>s.name).slice(0,20));
       setStmsList(all.sort((a,b)=>a.name.localeCompare(b.name)));
-      setPhase('pin');
+      if(phaseRef.current === 'loading') setPhase('pin');
     });
     return()=>unsub();
   },[]);
@@ -167,7 +170,9 @@ export default function StmsApp() {
   };
 
   const assignTc=(logId,gearType,num,tcName)=>{
-    fbSet(`log/${logId}/tcAssignments/${gearType}_${num}`, tcName||null);
+    const regionPath = selectedStms?.__region || REGION;
+    const path = regionPath ? `${regionPath}/log/${logId}/tcAssignments/${gearType}_${num}` : `log/${logId}/tcAssignments/${gearType}_${num}`;
+    set(ref(db, path), tcName || null).catch(console.error);
     setAssignTarget(null); setTcFilter('');
   };
 
@@ -238,7 +243,8 @@ export default function StmsApp() {
               const rts=sortNums(checkout.rts||[]);
               const wands=sortNums(checkout.wands||[]);
               const lights=sortNums(checkout.lights||[]);
-              const total=rts.length+wands.length+lights.length;
+              const harnesses=sortNums(checkout.harnesses||[]);
+              const total=rts.length+wands.length+lights.length+harnesses.length;
               const assigned=Object.values(checkout.tcAssignments||{}).filter(Boolean).length;
               return (
                 <div key={checkout.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -313,6 +319,23 @@ export default function StmsApp() {
                         </div>
                       </div>
                     )}
+                    {harnesses.length>0&&(
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">🧰 Harnesses</p>
+                        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                          {harnesses.map(n=>{
+                            const tc=getAssignment(checkout,'harness',n);
+                            return (
+                              <button key={n} onClick={()=>{setAssignTarget({logId:checkout.id,gearType:'harness',num:n,current:tc});setTcFilter('');}}
+                                className={`rounded-xl p-2 text-center border-2 active:scale-95 transition-all ${tc?'bg-indigo-50 border-indigo-400':'bg-slate-50 border-slate-200'}`}>
+                                <div className="text-base font-bold text-slate-800 leading-tight">{n}</div>
+                                <div className="text-xs mt-0.5 truncate text-slate-400 leading-tight" style={{fontSize:'10px'}}>{tc?tc.split(' ')[0]:'—'}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -332,7 +355,7 @@ export default function StmsApp() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-slate-800 text-base">
-                    Assign {assignTarget.gearType==='rt'?'📻 RT':assignTarget.gearType==='wand'?'🟡 Wand':'💡 Light'} #{assignTarget.num}
+                    Assign {assignTarget.gearType==='rt'?'📻 RT':assignTarget.gearType==='wand'?'🟡 Wand':assignTarget.gearType==='harness'?'🧰 Harness':'💡 Light'} #{assignTarget.num}
                   </h3>
                   {assignTarget.current&&(
                     <p className="text-xs text-slate-500 mt-0.5">Currently: <span className="font-medium text-slate-700">{assignTarget.current}</span></p>
